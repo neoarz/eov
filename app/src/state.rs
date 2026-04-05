@@ -1,7 +1,9 @@
 //! Application state management
 
-use common::{TileManager, ViewportState, WsiFile};
+use common::{TileCache, TileManager, ViewportState, WsiFile};
+use crate::tile_loader::TileLoader;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Available tools
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -86,17 +88,41 @@ pub struct OpenFile {
     /// WSI file handle
     pub wsi: WsiFile,
     /// Tile manager for this file
-    pub tile_manager: TileManager,
+    pub tile_manager: Arc<TileManager>,
+    /// Background tile loader
+    pub tile_loader: TileLoader,
     /// Primary viewport state
     pub viewport: ViewportState,
     /// Secondary viewport state (for split view)
     pub secondary_viewport: Option<ViewportState>,
     /// Thumbnail for minimap (RGBA data)
     pub thumbnail: Option<Vec<u8>>,
+    /// Whether thumbnail has been uploaded to UI
+    pub thumbnail_set: bool,
     /// Region of interest (if set)
     pub roi: Option<RegionOfInterest>,
     /// Measurements
     pub measurements: Vec<Measurement>,
+    /// Reusable render buffer to avoid per-frame allocation
+    pub render_buffer: Vec<u8>,
+    /// Last rendered viewport state (for dirty checking)
+    pub last_render_zoom: f64,
+    pub last_render_center_x: f64,
+    pub last_render_center_y: f64,
+    pub last_render_width: f64,
+    pub last_render_height: f64,
+    /// Number of tiles loaded since last render
+    pub tiles_loaded_since_render: u32,
+    /// Frame counter for dirty tracking (0 means never rendered)
+    pub frame_count: u32,
+    /// Last render timestamp (for throttling tile update renders)
+    pub last_render_time: std::time::Instant,
+    /// Last rendered secondary viewport state (for dirty checking)
+    pub last_secondary_zoom: f64,
+    pub last_secondary_center_x: f64,
+    pub last_secondary_center_y: f64,
+    pub last_secondary_width: f64,
+    pub last_secondary_height: f64,
 }
 
 /// Pane identifier (left/primary or right/secondary)
@@ -152,7 +178,8 @@ impl AppState {
         &mut self,
         path: PathBuf,
         wsi: WsiFile,
-        tile_manager: TileManager,
+        tile_manager: Arc<TileManager>,
+        tile_loader: TileLoader,
         viewport: ViewportState,
         thumbnail: Option<Vec<u8>>,
     ) -> i32 {
@@ -170,11 +197,27 @@ impl AppState {
             filename,
             wsi,
             tile_manager,
+            tile_loader,
             viewport,
             secondary_viewport: None,
             thumbnail,
+            thumbnail_set: false,
             roi: None,
             measurements: Vec::new(),
+            render_buffer: Vec::new(),
+            last_render_zoom: 0.0,
+            last_render_center_x: 0.0,
+            last_render_center_y: 0.0,
+            last_render_width: 0.0,
+            last_render_height: 0.0,
+            tiles_loaded_since_render: 0,
+            frame_count: 0,
+            last_render_time: std::time::Instant::now(),
+            last_secondary_zoom: 0.0,
+            last_secondary_center_x: 0.0,
+            last_secondary_center_y: 0.0,
+            last_secondary_width: 0.0,
+            last_secondary_height: 0.0,
         });
 
         self.active_file_id = Some(id);

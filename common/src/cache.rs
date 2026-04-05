@@ -13,16 +13,16 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-/// Default maximum cache size in bytes (512MB)
-pub const DEFAULT_CACHE_SIZE_BYTES: usize = 512 * 1024 * 1024;
+/// Default maximum cache size in bytes (64MB)
+pub const DEFAULT_CACHE_SIZE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Default maximum number of tiles to cache
-pub const DEFAULT_MAX_TILES: usize = 4096;
+pub const DEFAULT_MAX_TILES: usize = 256;
 
 /// Cache entry with metadata
 #[derive(Clone)]
 struct CacheEntry {
-    tile: TileData,
+    tile: Arc<TileData>,
     last_access: Instant,
     size_bytes: usize,
 }
@@ -31,7 +31,7 @@ impl CacheEntry {
     fn new(tile: TileData) -> Self {
         let size_bytes = tile.data.len();
         Self {
-            tile,
+            tile: Arc::new(tile),
             last_access: Instant::now(),
             size_bytes,
         }
@@ -96,11 +96,19 @@ impl TileCache {
     }
 
     /// Get a tile from the cache
-    pub fn get(&self, coord: &TileCoord) -> Option<TileData> {
-        if let Some(mut entry) = self.cache.get_mut(coord) {
-            entry.last_access = Instant::now();
-            
-            // Update LRU
+    pub fn get(&self, coord: &TileCoord) -> Option<Arc<TileData>> {
+        // Get the tile and release DashMap lock immediately
+        let tile = {
+            if let Some(mut entry) = self.cache.get_mut(coord) {
+                entry.last_access = Instant::now();
+                Some(Arc::clone(&entry.tile))
+            } else {
+                None
+            }
+        }; // DashMap lock released here
+        
+        if tile.is_some() {
+            // Update LRU (now safe - not holding DashMap lock)
             {
                 let mut lru = self.lru.lock();
                 lru.get(coord);
@@ -113,15 +121,15 @@ impl TileCache {
             }
             
             trace!("Cache hit for {:?}", coord);
-            Some(entry.tile.clone())
         } else {
             {
                 let mut stats = self.stats.lock();
                 stats.misses += 1;
             }
             trace!("Cache miss for {:?}", coord);
-            None
         }
+        
+        tile
     }
 
     /// Insert a tile into the cache
@@ -158,7 +166,7 @@ impl TileCache {
     }
 
     /// Remove a tile from the cache
-    pub fn remove(&self, coord: &TileCoord) -> Option<TileData> {
+    pub fn remove(&self, coord: &TileCoord) -> Option<Arc<TileData>> {
         if let Some((_, entry)) = self.cache.remove(coord) {
             let mut bytes = self.current_bytes.lock();
             *bytes = bytes.saturating_sub(entry.size_bytes);
@@ -196,22 +204,45 @@ impl TileCache {
 
     /// Ensure there's capacity for a new entry
     fn ensure_capacity(&self, required_bytes: usize) {
-        let mut bytes = self.current_bytes.lock();
-        let mut lru = self.lru.lock();
-        let mut stats = self.stats.lock();
-
-        // Evict tiles if over capacity
-        while (*bytes + required_bytes > self.max_bytes || self.cache.len() >= self.max_tiles)
-            && !self.cache.is_empty()
-        {
-            if let Some((coord, _)) = lru.pop_lru() {
-                if let Some((_, entry)) = self.cache.remove(&coord) {
-                    *bytes = bytes.saturating_sub(entry.size_bytes);
-                    stats.evictions += 1;
-                    trace!("Evicted tile {:?}", coord);
+        // First, determine which tiles to evict while holding locks
+        let coords_to_evict: Vec<TileCoord> = {
+            let bytes = self.current_bytes.lock();
+            let mut lru = self.lru.lock();
+            
+            let mut coords = Vec::new();
+            let mut projected_bytes = *bytes;
+            let mut projected_count = self.cache.len();
+            
+            // Collect coords to evict
+            while (projected_bytes + required_bytes > self.max_bytes || projected_count >= self.max_tiles)
+                && projected_count > 0
+            {
+                if let Some((coord, _)) = lru.pop_lru() {
+                    // Estimate the size we'll free (use average tile size as approximation)
+                    let estimated_size = if projected_count > 0 {
+                        projected_bytes / projected_count
+                    } else {
+                        256 * 256 * 4 // Default tile size
+                    };
+                    projected_bytes = projected_bytes.saturating_sub(estimated_size);
+                    projected_count = projected_count.saturating_sub(1);
+                    coords.push(coord);
+                } else {
+                    break;
                 }
-            } else {
-                break;
+            }
+            coords
+        }; // Release bytes and lru locks here
+        
+        // Now evict tiles without holding the LRU lock
+        for coord in coords_to_evict {
+            if let Some((_, entry)) = self.cache.remove(&coord) {
+                let mut bytes = self.current_bytes.lock();
+                *bytes = bytes.saturating_sub(entry.size_bytes);
+                
+                let mut stats = self.stats.lock();
+                stats.evictions += 1;
+                trace!("Evicted tile {:?}", coord);
             }
         }
     }
@@ -340,7 +371,7 @@ impl AsyncTileLoader {
     }
 
     /// Get a tile from cache, or return None if not available
-    pub fn get_cached(&self, coord: &TileCoord) -> Option<TileData> {
+    pub fn get_cached(&self, coord: &TileCoord) -> Option<Arc<TileData>> {
         self.cache.get(coord)
     }
 

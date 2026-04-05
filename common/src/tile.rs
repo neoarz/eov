@@ -189,48 +189,63 @@ impl TileManager {
         let end_tile_y = ((level_bottom / tile_size).ceil() as u64 + 1)
             .min(level_info.tiles_y(self.tile_size));
 
-        let mut tiles = Vec::with_capacity(
-            ((end_tile_x.saturating_sub(start_tile_x)) * (end_tile_y.saturating_sub(start_tile_y))) as usize
-        );
+        // Safety: limit tile count to prevent memory issues
+        let tile_count = (end_tile_x.saturating_sub(start_tile_x)) * (end_tile_y.saturating_sub(start_tile_y));
+        if tile_count > 1000 {
+            tracing::warn!(
+                "visible_tiles would return {} tiles (capped), level={}, bounds=({:.0},{:.0})-({:.0},{:.0})",
+                tile_count, level, bounds_left, bounds_top, bounds_right, bounds_bottom
+            );
+        }
+
+        let mut tiles = Vec::with_capacity(tile_count.min(1000) as usize);
 
         for y in start_tile_y..end_tile_y {
             for x in start_tile_x..end_tile_x {
                 tiles.push(TileCoord::new(level, x, y));
+                if tiles.len() >= 1000 {
+                    return tiles;
+                }
             }
         }
 
         tiles
     }
 
-    /// Calculate tiles to prefetch (next zoom levels, adjacent areas)
+    /// Calculate tiles to prefetch (adjacent zoom levels)
+    /// 
+    /// Level numbering: 0 = highest resolution (most tiles), higher levels = lower resolution
     pub fn prefetch_tiles(
         &self,
         current_tiles: &[TileCoord],
         level: u32,
     ) -> Vec<TileCoord> {
         let mut prefetch = Vec::new();
+        let level_count = self.wsi.level_count();
 
-        // Add tiles from adjacent zoom levels
-        if level > 0 {
-            // Lower resolution tiles (zoomed out)
+        // Prefetch from the next LOWER resolution level (level + 1) as fallback
+        // Each tile at current level maps to one parent tile at level + 1
+        if level + 1 < level_count {
             for tile in current_tiles {
+                // Parent tile covers 2x2 area of current tiles
                 let parent_x = tile.x / 2;
                 let parent_y = tile.y / 2;
-                let coord = TileCoord::new(level - 1, parent_x, parent_y);
+                let coord = TileCoord::new(level + 1, parent_x, parent_y);
                 if !prefetch.contains(&coord) {
                     prefetch.push(coord);
                 }
             }
         }
 
-        if level < self.wsi.level_count() - 1 {
-            // Higher resolution tiles (zoomed in)
+        // Prefetch from the next HIGHER resolution level (level - 1) for when user zooms in
+        // Each tile at current level corresponds to 4 child tiles at level - 1
+        if level > 0 {
             for tile in current_tiles {
                 for dy in 0..2u64 {
                     for dx in 0..2u64 {
                         let child_x = tile.x * 2 + dx;
                         let child_y = tile.y * 2 + dy;
-                        let coord = TileCoord::new(level + 1, child_x, child_y);
+                        let coord = TileCoord::new(level - 1, child_x, child_y);
                         if !prefetch.contains(&coord) {
                             prefetch.push(coord);
                         }

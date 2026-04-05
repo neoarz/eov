@@ -3,32 +3,40 @@
 
 mod state;
 mod render;
+mod tile_loader;
 
 use anyhow::Result;
-use common::{TileCache, TileManager, ViewportState, WsiFile};
+use common::{TileCache, TileCoord, TileManager, ViewportState, WsiFile};
 use parking_lot::RwLock;
 use rfd::FileDialog;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 use state::{AppState, OpenFile, PaneId};
+use tile_loader::{TileLoader, find_fallback_tile, calculate_fallback_region, calculate_wanted_tiles};
+use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, info, trace, warn};
+
+macro_rules! dbg_print {
+    ($($arg:tt)*) => {{
+        eprintln!($($arg)*);
+        let _ = std::io::stderr().flush();
+    }};
+}
 
 slint::include_modules!();
 
 /// Frame rate for viewport updates
-const TARGET_FPS: f64 = 60.0;
+const TARGET_FPS: f64 = 30.0;
 const FRAME_DURATION_MS: u64 = (1000.0 / TARGET_FPS) as u64;
 
 fn main() -> Result<()> {
-    // Initialize logging
+    // Initialize logging - RUST_LOG env controls level
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("app=debug".parse()?)
-                .add_directive("common=debug".parse()?),
+            tracing_subscriber::EnvFilter::from_default_env(),
         )
         .init();
 
@@ -61,6 +69,8 @@ fn main() -> Result<()> {
     for path in files_to_open {
         open_file(&ui, &state, &tile_cache, path);
     }
+    
+    dbg_print!("[MAIN] Files opened, starting render timer");
 
     // Set up render timer
     let render_timer = Timer::default();
@@ -79,6 +89,8 @@ fn main() -> Result<()> {
             },
         );
     }
+    
+    dbg_print!("[MAIN] Timer started, running UI");
 
     // Run application
     ui.run()?;
@@ -509,13 +521,14 @@ fn setup_callbacks(ui: &AppWindow, state: Arc<RwLock<AppState>>, tile_cache: Arc
     }
 }
 
-fn open_file(ui: &AppWindow, state: &Arc<RwLock<AppState>>, _tile_cache: &Arc<TileCache>, path: PathBuf) {
-    info!("Opening file: {}", path.display());
+fn open_file(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: &Arc<TileCache>, path: PathBuf) {
+    dbg_print!("[OPEN] Opening file: {}", path.display());
     ui.set_is_loading(true);
     ui.set_status_text(SharedString::from(format!("Opening {}...", path.display())));
 
     match WsiFile::open(&path) {
         Ok(wsi) => {
+            dbg_print!("[OPEN] File opened successfully");
             let id = {
                 let mut state_guard = state.write();
                 
@@ -531,12 +544,16 @@ fn open_file(ui: &AppWindow, state: &Arc<RwLock<AppState>>, _tile_cache: &Arc<Ti
                     props.height as f64,
                 );
                 
-                let tile_manager = TileManager::new(wsi.clone());
+                // Create tile manager and wrap in Arc for shared use
+                let tile_manager = Arc::new(TileManager::new(wsi.clone()));
                 
-                // Generate thumbnail for minimap
+                // Create background tile loader (tiles are loaded on-demand)
+                let tile_loader = TileLoader::new(Arc::clone(&tile_manager), Arc::clone(tile_cache));
+                
+                // Generate small thumbnail for minimap (lazy - only reads what's needed)
                 let thumbnail = generate_thumbnail(&wsi, 150);
                 
-                state_guard.add_file(path.clone(), wsi, tile_manager, viewport, thumbnail)
+                state_guard.add_file(path.clone(), wsi, tile_manager, tile_loader, viewport, thumbnail)
             };
             
             let state_guard = state.read();
@@ -565,36 +582,62 @@ fn generate_thumbnail(wsi: &WsiFile, max_size: u32) -> Option<Vec<u8>> {
     let level = wsi.level_count().saturating_sub(1);
     let level_info = wsi.level(level)?;
     
-    // Calculate thumbnail dimensions
+    // Calculate thumbnail dimensions maintaining aspect ratio
     let aspect = level_info.width as f64 / level_info.height as f64;
     let (thumb_w, thumb_h) = if aspect > 1.0 {
-        (max_size, (max_size as f64 / aspect) as u32)
+        (max_size, (max_size as f64 / aspect).max(1.0) as u32)
     } else {
-        ((max_size as f64 * aspect) as u32, max_size)
+        ((max_size as f64 * aspect).max(1.0) as u32, max_size)
     };
     
-    match wsi.read_region(0, 0, level, level_info.width as u32, level_info.height as u32) {
-        Ok(data) => {
-            // Resize if needed (simple box filter)
-            if level_info.width <= max_size as u64 && level_info.height <= max_size as u64 {
-                Some(data)
-            } else {
-                // Use image crate for proper resizing
+    // If level is small enough, read it directly
+    if level_info.width <= max_size as u64 * 2 && level_info.height <= max_size as u64 * 2 {
+        match wsi.read_region(0, 0, level, level_info.width as u32, level_info.height as u32) {
+            Ok(data) => {
+                if level_info.width <= max_size as u64 && level_info.height <= max_size as u64 {
+                    return Some(data);
+                }
+                // Resize to thumbnail size
                 if let Some(img) = image::RgbaImage::from_raw(
                     level_info.width as u32,
                     level_info.height as u32,
                     data,
                 ) {
                     let resized = image::imageops::resize(
-                        &img,
-                        thumb_w,
-                        thumb_h,
+                        &img, thumb_w, thumb_h,
                         image::imageops::FilterType::Triangle,
                     );
-                    Some(resized.into_raw())
-                } else {
-                    None
+                    return Some(resized.into_raw());
                 }
+            }
+            Err(e) => {
+                warn!("Failed to generate thumbnail: {}", e);
+            }
+        }
+    }
+    
+    // Level is too large - read a smaller region from center
+    // This avoids loading the entire level into memory
+    let sample_size = max_size * 2;
+    let center_x = (level_info.width / 2).saturating_sub(sample_size as u64 / 2);
+    let center_y = (level_info.height / 2).saturating_sub(sample_size as u64 / 2);
+    let read_w = sample_size.min(level_info.width as u32);
+    let read_h = sample_size.min(level_info.height as u32);
+    
+    // Convert to level 0 coordinates for read_region
+    let x0 = (center_x as f64 * level_info.downsample) as i64;
+    let y0 = (center_y as f64 * level_info.downsample) as i64;
+    
+    match wsi.read_region(x0, y0, level, read_w, read_h) {
+        Ok(data) => {
+            if let Some(img) = image::RgbaImage::from_raw(read_w, read_h, data) {
+                let resized = image::imageops::resize(
+                    &img, thumb_w, thumb_h,
+                    image::imageops::FilterType::Triangle,
+                );
+                Some(resized.into_raw())
+            } else {
+                None
             }
         }
         Err(e) => {
@@ -622,7 +665,12 @@ fn update_tabs(ui: &AppWindow, state: &AppState) {
 }
 
 fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: &Arc<TileCache>) {
+    // Debug: track where we are
+    dbg_print!("[UPDATE] start");
+    
+    // Check 1: Can we acquire state lock?
     let mut state = state.write();
+    dbg_print!("[UPDATE] got lock");
     
     let Some(file_id) = state.active_file_id else {
         return;
@@ -680,25 +728,32 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
         height: rect.height,
     });
     
-    // Set thumbnail for minimap (once, shared between both panes)
-    if let Some(ref thumb_data) = file.thumbnail {
-        let level = file.wsi.level_count().saturating_sub(1);
-        if let Some(level_info) = file.wsi.level(level) {
-            let aspect = level_info.width as f64 / level_info.height as f64;
-            let (w, h) = if aspect > 1.0 {
-                (150u32, (150.0 / aspect) as u32)
-            } else {
-                ((150.0 * aspect) as u32, 150u32)
-            };
-            
-            if let Some(buffer) = create_image_buffer(thumb_data, w, h) {
-                ui.set_minimap_thumbnail(Image::from_rgba8(buffer));
+    // Set thumbnail for minimap (ONCE only - avoid per-frame buffer allocation)
+    if !file.thumbnail_set {
+        trace!("Setting thumbnail");
+        if let Some(ref thumb_data) = file.thumbnail {
+            let level = file.wsi.level_count().saturating_sub(1);
+            if let Some(level_info) = file.wsi.level(level) {
+                let aspect = level_info.width as f64 / level_info.height as f64;
+                let (w, h) = if aspect > 1.0 {
+                    (150u32, (150.0 / aspect) as u32)
+                } else {
+                    ((150.0 * aspect) as u32, 150u32)
+                };
+                
+                if let Some(buffer) = create_image_buffer(thumb_data, w, h) {
+                    ui.set_minimap_thumbnail(Image::from_rgba8(buffer));
+                    file.thumbnail_set = true;
+                }
             }
         }
+        trace!("Thumbnail set");
     }
     
     // Render primary viewport
+    dbg_print!("[UPDATE] calling render");
     render_viewport_to_buffer(ui, file, tile_cache, true);
+    dbg_print!("[UPDATE] render done");
     
     // Update ROI overlay (must be done every frame for proper tracking)
     // Re-borrow viewport since render_viewport_to_buffer takes &mut
@@ -782,15 +837,40 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     }
 }
 
-fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>, is_primary: bool) {
+fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>, _is_primary: bool) {
+    dbg_print!("[RENDER] start");
     let vp = &file.viewport.viewport;
+    
+    // Copy viewport values for dirty tracking
+    let vp_zoom = vp.zoom;
+    let vp_center_x = vp.center.x;
+    let vp_center_y = vp.center.y;
+    let vp_width = vp.width;
+    let vp_height = vp.height;
+    
+    trace!("render: viewport {}x{} zoom={}", vp_width, vp_height, vp_zoom);
+    
+    // Is this the first frame? (must render at least once)
+    let is_first_frame = file.frame_count == 0;
+    
+    // Check if viewport changed since last render
+    let viewport_changed = 
+        (file.last_render_zoom - vp_zoom).abs() > 0.0001 ||
+        (file.last_render_center_x - vp_center_x).abs() > 0.1 ||
+        (file.last_render_center_y - vp_center_y).abs() > 0.1 ||
+        (file.last_render_width - vp_width).abs() > 0.1 ||
+        (file.last_render_height - vp_height).abs() > 0.1;
     
     // Determine best level for current zoom
     let level = file.wsi.best_level_for_downsample(vp.effective_downsample());
     let tile_size = file.tile_manager.tile_size();
     
+    trace!("render: level={} tile_size={}", level, tile_size);
+    
     // Get visible tiles using viewport bounds
     let bounds = vp.bounds();
+    trace!("render: bounds left={} top={} right={} bottom={}", bounds.left, bounds.top, bounds.right, bounds.bottom);
+    
     let visible_tiles = file.tile_manager.visible_tiles(
         level,
         bounds.left,
@@ -799,60 +879,192 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         bounds.bottom,
     );
     
-    // Create a buffer for rendering
-    let render_width = vp.width as u32;
-    let render_height = (vp.height - 24.0) as u32; // Account for status bar
+    trace!("render: visible_tiles count={}", visible_tiles.len());
     
-    let mut buffer = vec![30u8; (render_width * render_height * 4) as usize]; // Dark background
+    // Limit visible tiles to prevent overwhelming
+    let visible_tiles: Vec<_> = visible_tiles.into_iter().take(50).collect();
     
-    // Set alpha channel
-    for i in (3..buffer.len()).step_by(4) {
-        buffer[i] = 255;
+    // Count how many tiles are in cache
+    let cached_count = visible_tiles.iter().filter(|c| tile_cache.contains(c)).count() as u32;
+    let new_tiles_loaded = cached_count > file.tiles_loaded_since_render;
+    
+    trace!("render: cached={} new_tiles={}", cached_count, new_tiles_loaded);
+    
+    // Update wanted tiles for background loading (always do this)
+    let wanted = calculate_wanted_tiles(
+        &file.tile_manager,
+        level,
+        bounds.left,
+        bounds.top,
+        bounds.right,
+        bounds.bottom,
+    );
+    
+    trace!("render: wanted tiles={}", wanted.len());
+    
+    file.tile_loader.set_wanted_tiles(wanted);
+    
+    trace!("render: set_wanted_tiles done");
+    
+    // Throttle tile update renders to max 4x per second (250ms between renders)
+    let time_since_render = file.last_render_time.elapsed();
+    let throttle_ok = time_since_render.as_millis() >= 250;
+    
+    // Skip rendering if nothing changed (but always render first frame and viewport changes)
+    if !is_first_frame && !viewport_changed && (!new_tiles_loaded || !throttle_ok) {
+        trace!("render: skipping (no changes)");
+        return;
     }
+    
+    dbg_print!("[RENDER] proceeding with render");
+    
+    // Update tracking state
+    file.frame_count += 1;
+    file.last_render_time = std::time::Instant::now();
+    file.last_render_zoom = vp_zoom;
+    file.last_render_center_x = vp_center_x;
+    file.last_render_center_y = vp_center_y;
+    
+    dbg_print!("[RENDER] tracking state updated");
+    file.last_render_width = vp_width;
+    file.last_render_height = vp_height;
+    file.tiles_loaded_since_render = cached_count;
+    
+    // Use persistent buffer for rendering
+    let render_width = vp_width as u32;
+    let render_height = (vp_height - 24.0).max(1.0) as u32; // Account for status bar, ensure > 0
+    
+    dbg_print!("[RENDER] buffer {}x{}", render_width, render_height);
+    
+    if render_width == 0 || render_height == 0 {
+        return;
+    }
+    
+    let buffer_size = (render_width * render_height * 4) as usize;
+    dbg_print!("[RENDER] buffer_size={}", buffer_size);
+    
+    // Resize buffer if needed (only reallocates if capacity insufficient)
+    if file.render_buffer.len() != buffer_size {
+        dbg_print!("[RENDER] resizing buffer to {}", buffer_size);
+        file.render_buffer.resize(buffer_size, 0);
+    }
+    
+    dbg_print!("[RENDER] clearing buffer len={}", file.render_buffer.len());
+    
+    // Fast clear to dark background (30, 30, 30, 255) using chunks
+    let pattern = [30u8, 30, 30, 255];
+    for chunk in file.render_buffer.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&pattern);
+    }
+    
+    dbg_print!("[RENDER] buffer cleared");
+    
+    let buffer = &mut file.render_buffer[..];
+    dbg_print!("[RENDER] got buffer slice");
     
     let level_info = match file.wsi.level(level) {
         Some(info) => info,
         None => return,
     };
+    dbg_print!("[RENDER] got level_info: downsample={}", level_info.downsample);
     
-    // Render each visible tile
+    // TEMPORARILY DISABLED: First pass (fallback tiles) - skip for debugging
+    // TODO: Re-enable once basic rendering works
+    /*
+    trace!("render: starting first pass (fallback tiles)");
+    
+    // First pass: render fallback tiles for any missing high-res tiles
+    let mut fallbacks_rendered = 0;
     for coord in &visible_tiles {
-        // Try to get from cache first
-        let tile_data = if let Some(tile) = tile_cache.get(coord) {
-            tile
-        } else {
-            // Load tile synchronously (in a real app, this would be async)
-            match file.tile_manager.load_tile_sync(*coord) {
-                Ok(tile) => {
-                    tile_cache.insert(tile.clone());
-                    tile
-                }
-                Err(_) => continue,
-            }
-        };
+        if tile_cache.contains(coord) {
+            continue; // Will be rendered in second pass
+        }
         
-        // Calculate tile position in image coordinates
+        // Find a fallback tile from lower-resolution levels
+        if let Some((fallback_tile, fallback_level)) = find_fallback_tile(tile_cache, &file.wsi, *coord) {
+            // Validate tile data
+            let expected_size = (fallback_tile.width * fallback_tile.height * 4) as usize;
+            if fallback_tile.data.len() != expected_size {
+                warn!("Fallback tile {:?} has invalid data size: {} vs expected {}", 
+                    fallback_tile.coord, fallback_tile.data.len(), expected_size);
+                continue;
+            }
+            
+            let tile_x = coord.x as f64 * tile_size as f64;
+            let tile_y = coord.y as f64 * tile_size as f64;
+            
+            let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
+            let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
+            let screen_x_end = (((tile_x + tile_size as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
+            let screen_y_end = (((tile_y + tile_size as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
+            let screen_w = screen_x_end - screen_x;
+            let screen_h = screen_y_end - screen_y;
+            
+            // Skip if entirely off-screen or invalid size
+            if screen_w <= 0 || screen_h <= 0 {
+                continue;
+            }
+            
+            if let Some(region) = calculate_fallback_region(&file.wsi, *coord, fallback_level) {
+                // Validate region
+                if region.src_x < 0.0 || region.src_y < 0.0 || 
+                   region.src_x + region.src_w > 1.0 || region.src_y + region.src_h > 1.0 {
+                    warn!("Invalid fallback region: ({},{}) + ({},{})", 
+                        region.src_x, region.src_y, region.src_w, region.src_h);
+                    continue;
+                }
+                
+                blit_tile_region(
+                    buffer,
+                    render_width,
+                    render_height,
+                    &fallback_tile.data,
+                    fallback_tile.width,
+                    fallback_tile.height,
+                    region.src_x,
+                    region.src_y,
+                    region.src_w,
+                    region.src_h,
+                    screen_x,
+                    screen_y,
+                    screen_w,
+                    screen_h,
+                );
+                fallbacks_rendered += 1;
+            }
+        }
+    }
+    
+    trace!("render: first pass done, rendered {} fallbacks", fallbacks_rendered);
+    */
+    // END DISABLED FALLBACK CODE
+    
+    dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", visible_tiles.len());
+    
+    // Second pass: render high-res tiles that are available
+    let mut tiles_blitted = 0;
+    for (i, coord) in visible_tiles.iter().enumerate() {
+        dbg_print!("[RENDER] tile {} of {}: {:?}", i, visible_tiles.len(), coord);
+        let Some(tile_data) = tile_cache.get(coord) else {
+            dbg_print!("[RENDER] tile {:?} not in cache, skip", coord);
+            continue;
+        };
+        dbg_print!("[RENDER] tile {:?} in cache, blitting", coord);
+        
         let tile_x = coord.x as f64 * tile_size as f64;
         let tile_y = coord.y as f64 * tile_size as f64;
         
-        // Calculate screen coordinates for this tile's edges
-        // We calculate both the left edge and right edge to determine the exact pixel width
-        // This prevents gaps between adjacent tiles due to floating-point rounding
-        let bounds = vp.bounds();
         let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
         let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
-        
-        // Calculate the position where the next tile would start to get exact width
         let screen_x_end = (((tile_x + tile_data.width as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
         let screen_y_end = (((tile_y + tile_data.height as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
-        
-        // Use the difference to get seamless tile widths
         let screen_w = screen_x_end - screen_x;
         let screen_h = screen_y_end - screen_y;
         
-        // Blit tile to buffer (simple nearest-neighbor scaling)
+        dbg_print!("[RENDER] blit tile {:?}: screen=({},{}) size={}x{}", coord, screen_x, screen_y, screen_w, screen_h);
+        
         blit_tile(
-            &mut buffer,
+            buffer,
             render_width,
             render_height,
             &tile_data.data,
@@ -863,12 +1075,21 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             screen_w,
             screen_h,
         );
+        tiles_blitted += 1;
+        dbg_print!("[RENDER] blit done, total={}", tiles_blitted);
     }
     
-    // Create image from buffer
-    if let Some(pixel_buffer) = create_image_buffer(&buffer, render_width, render_height) {
+    dbg_print!("[RENDER] blitted {} tiles total", tiles_blitted);
+    
+    dbg_print!("[RENDER] creating image buffer");
+    
+    // Create image from buffer and update UI
+    if let Some(pixel_buffer) = create_image_buffer(buffer, render_width, render_height) {
+        dbg_print!("[RENDER] updating UI");
         ui.set_viewport_content(Image::from_rgba8(pixel_buffer));
     }
+    
+    dbg_print!("[RENDER] done");
 }
 
 fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>) {
@@ -892,9 +1113,23 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         bounds.bottom,
     );
     
+    // Limit visible tiles to prevent freezing
+    let visible_tiles: Vec<_> = visible_tiles.into_iter().take(50).collect();
+    
+    // Update wanted tiles for background loading (secondary viewport)
+    let wanted = calculate_wanted_tiles(
+        &file.tile_manager,
+        level,
+        bounds.left,
+        bounds.top,
+        bounds.right,
+        bounds.bottom,
+    );
+    file.tile_loader.set_wanted_tiles(wanted);
+    
     // Create a buffer for rendering
     let render_width = vp.width as u32;
-    let render_height = vp.height as u32;
+    let render_height = vp.height.max(1.0) as u32;
     
     if render_width == 0 || render_height == 0 {
         return;
@@ -912,41 +1147,63 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         None => return,
     };
     
-    // Render each visible tile
+    // TEMPORARILY DISABLED: First pass (fallback tiles) - skip for debugging
+    /*
+    // First pass: render fallback tiles for missing high-res tiles
     for coord in &visible_tiles {
-        // Try to get from cache first
-        let tile_data = if let Some(tile) = tile_cache.get(coord) {
-            tile
-        } else {
-            // Load tile synchronously
-            match file.tile_manager.load_tile_sync(*coord) {
-                Ok(tile) => {
-                    tile_cache.insert(tile.clone());
-                    tile
-                }
-                Err(_) => continue,
+        if tile_cache.contains(coord) {
+            continue;
+        }
+        
+        if let Some((fallback_tile, fallback_level)) = find_fallback_tile(tile_cache, &file.wsi, *coord) {
+            let tile_x = coord.x as f64 * tile_size as f64;
+            let tile_y = coord.y as f64 * tile_size as f64;
+            
+            let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
+            let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
+            let screen_x_end = (((tile_x + tile_size as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
+            let screen_y_end = (((tile_y + tile_size as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
+            let screen_w = screen_x_end - screen_x;
+            let screen_h = screen_y_end - screen_y;
+            
+            if let Some(region) = calculate_fallback_region(&file.wsi, *coord, fallback_level) {
+                blit_tile_region(
+                    &mut buffer,
+                    render_width,
+                    render_height,
+                    &fallback_tile.data,
+                    fallback_tile.width,
+                    fallback_tile.height,
+                    region.src_x,
+                    region.src_y,
+                    region.src_w,
+                    region.src_h,
+                    screen_x,
+                    screen_y,
+                    screen_w,
+                    screen_h,
+                );
             }
+        }
+    }
+    */
+    
+    // Second pass: render high-res tiles that are available
+    for coord in &visible_tiles {
+        let Some(tile_data) = tile_cache.get(coord) else {
+            continue;
         };
         
-        // Calculate tile position in image coordinates
         let tile_x = coord.x as f64 * tile_size as f64;
         let tile_y = coord.y as f64 * tile_size as f64;
         
-        // Calculate screen coordinates for this tile's edges
-        // We calculate both the left edge and right edge to determine the exact pixel width
-        // This prevents gaps between adjacent tiles due to floating-point rounding
         let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
         let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
-        
-        // Calculate the position where the next tile would start to get exact width
         let screen_x_end = (((tile_x + tile_data.width as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
         let screen_y_end = (((tile_y + tile_data.height as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
-        
-        // Use the difference to get seamless tile widths
         let screen_w = screen_x_end - screen_x;
         let screen_h = screen_y_end - screen_y;
         
-        // Blit tile to buffer
         blit_tile(
             &mut buffer,
             render_width,
@@ -983,18 +1240,94 @@ fn blit_tile(
         return;
     }
     
+    // Early return if tile is entirely off-screen
+    if dest_x + scaled_width <= 0 || dest_y + scaled_height <= 0 {
+        return;
+    }
+    if dest_x >= dest_width as i32 || dest_y >= dest_height as i32 {
+        return;
+    }
+    
     let scale_x = src_width as f64 / scaled_width as f64;
     let scale_y = src_height as f64 / scaled_height as f64;
     
+    // Calculate visible region (clamp to destination bounds)
     let start_x = dest_x.max(0) as u32;
     let start_y = dest_y.max(0) as u32;
-    let end_x = ((dest_x + scaled_width) as u32).min(dest_width);
-    let end_y = ((dest_y + scaled_height) as u32).min(dest_height);
+    let end_x = (dest_x + scaled_width).min(dest_width as i32) as u32;
+    let end_y = (dest_y + scaled_height).min(dest_height as i32) as u32;
     
     for y in start_y..end_y {
         for x in start_x..end_x {
             let src_x = (((x as i32 - dest_x) as f64 * scale_x) as u32).min(src_width - 1);
             let src_y = (((y as i32 - dest_y) as f64 * scale_y) as u32).min(src_height - 1);
+            
+            let src_idx = ((src_y * src_width + src_x) * 4) as usize;
+            let dest_idx = ((y * dest_width + x) * 4) as usize;
+            
+            if src_idx + 3 < src.len() && dest_idx + 3 < dest.len() {
+                dest[dest_idx] = src[src_idx];
+                dest[dest_idx + 1] = src[src_idx + 1];
+                dest[dest_idx + 2] = src[src_idx + 2];
+                dest[dest_idx + 3] = src[src_idx + 3];
+            }
+        }
+    }
+}
+
+/// Blit a sub-region of a source tile to the destination buffer
+/// src_region_* are normalized (0.0-1.0) coordinates within the source tile
+fn blit_tile_region(
+    dest: &mut [u8],
+    dest_width: u32,
+    dest_height: u32,
+    src: &[u8],
+    src_width: u32,
+    src_height: u32,
+    src_region_x: f64,
+    src_region_y: f64,
+    src_region_w: f64,
+    src_region_h: f64,
+    dest_x: i32,
+    dest_y: i32,
+    scaled_width: i32,
+    scaled_height: i32,
+) {
+    if scaled_width <= 0 || scaled_height <= 0 || src_region_w <= 0.0 || src_region_h <= 0.0 {
+        return;
+    }
+    
+    // Early return if tile is entirely off-screen
+    if dest_x + scaled_width <= 0 || dest_y + scaled_height <= 0 {
+        return;
+    }
+    if dest_x >= dest_width as i32 || dest_y >= dest_height as i32 {
+        return;
+    }
+    
+    // Calculate source pixel region
+    let src_start_x = (src_region_x * src_width as f64) as u32;
+    let src_start_y = (src_region_y * src_height as f64) as u32;
+    let src_pixel_w = (src_region_w * src_width as f64).ceil() as u32;
+    let src_pixel_h = (src_region_h * src_height as f64).ceil() as u32;
+    
+    if src_pixel_w == 0 || src_pixel_h == 0 {
+        return;
+    }
+    
+    let scale_x = src_pixel_w as f64 / scaled_width as f64;
+    let scale_y = src_pixel_h as f64 / scaled_height as f64;
+    
+    // Calculate visible region (clamp to destination bounds)
+    let start_x = dest_x.max(0) as u32;
+    let start_y = dest_y.max(0) as u32;
+    let end_x = (dest_x + scaled_width).min(dest_width as i32) as u32;
+    let end_y = (dest_y + scaled_height).min(dest_height as i32) as u32;
+    
+    for y in start_y..end_y {
+        for x in start_x..end_x {
+            let src_x = (src_start_x + ((x as i32 - dest_x) as f64 * scale_x) as u32).min(src_width - 1);
+            let src_y = (src_start_y + ((y as i32 - dest_y) as f64 * scale_y) as u32).min(src_height - 1);
             
             let src_idx = ((src_y * src_width + src_x) * 4) as usize;
             let dest_idx = ((y * dest_width + x) * 4) as usize;

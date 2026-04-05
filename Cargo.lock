@@ -229,6 +229,8 @@ dependencies = [
  "anyhow",
  "arboard",
  "common",
+ "crossbeam-channel",
+ "dashmap",
  "image 0.25.10",
  "open",
  "parking_lot",

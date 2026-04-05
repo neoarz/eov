@@ -30,6 +30,10 @@ rfd = "0.15"
 # Thread-safe state
 parking_lot = "0.12"
 
+# Concurrent data structures
+crossbeam-channel = "0.5"
+dashmap = "6"
+
 # Clipboard
 arboard = "3"
 
