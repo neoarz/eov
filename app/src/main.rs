@@ -329,9 +329,12 @@ fn setup_callbacks(ui: &AppWindow, state: Arc<RwLock<AppState>>, tile_cache: Arc
         let state = Arc::clone(&state);
         
         ui.on_viewport_start_pan(move |x, y| {
+            trace!("viewport_start_pan called: x={}, y={}", x, y);
             let mut state = state.write();
             if let Some(viewport) = state.active_viewport_mut() {
                 viewport.start_drag(x as f64, y as f64);
+            } else {
+                trace!("viewport_start_pan: no active viewport!");
             }
         });
     }

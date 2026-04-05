@@ -438,71 +438,7 @@ component Viewport inherits Rectangle {
     
     background: Theme.viewport-bg;
     
-    // Input handling - MUST be declared BEFORE minimap so minimap is on top
-    touch := TouchArea {
-        width: 100%;
-        height: parent.height - 24px; // Only cover the viewport area, not status bar
-        
-        property <length> drag-start-x;
-        property <length> drag-start-y;
-        property <bool> is-dragging: false;
-        property <bool> is-tool-dragging: false;
-        
-        pointer-event(e) => {
-            // Right mouse button: always pan regardless of tool
-            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
-                self.is-dragging = true;
-                self.drag-start-x = self.mouse-x;
-                self.drag-start-y = self.mouse-y;
-                root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
-            } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
-                self.is-dragging = false;
-                root.end-pan();
-            }
-            // Left mouse button: tool-dependent behavior
-            else if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
-                if root.current-tool == ToolType.navigate {
-                    // Navigate tool: LMB also pans
-                    self.is-dragging = true;
-                    self.drag-start-x = self.mouse-x;
-                    self.drag-start-y = self.mouse-y;
-                    root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
-                } else {
-                    // Other tools: fire tool callback
-                    self.is-tool-dragging = true;
-                    root.tool-mouse-down(self.mouse-x / 1px, self.mouse-y / 1px);
-                }
-            } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
-                if root.current-tool == ToolType.navigate {
-                    self.is-dragging = false;
-                    root.end-pan();
-                } else {
-                    self.is-tool-dragging = false;
-                    root.tool-mouse-up(self.mouse-x / 1px, self.mouse-y / 1px);
-                }
-            }
-            // Handle move events
-            else if e.kind == PointerEventKind.move {
-                if self.is-dragging {
-                    let dx = (self.mouse-x - self.drag-start-x) / 1px;
-                    let dy = (self.mouse-y - self.drag-start-y) / 1px;
-                    self.drag-start-x = self.mouse-x;
-                    self.drag-start-y = self.mouse-y;
-                    root.pan(dx, dy);
-                } else if self.is-tool-dragging || root.current-tool != ToolType.navigate {
-                    root.tool-mouse-move(self.mouse-x / 1px, self.mouse-y / 1px);
-                }
-            }
-        }
-        
-        scroll-event(e) => {
-            let factor = e.delta-y > 0 ? 1.15 : (1.0 / 1.15);
-            root.zoom(factor, touch.mouse-x / 1px, touch.mouse-y / 1px);
-            return accept;
-        }
-    }
-    
-    // Main content area (visual only, no input handling)
+    // Main content area (visual only - declared first so it's at the back)
     Rectangle {
         clip: true;
         height: parent.height - 24px;
@@ -661,7 +597,72 @@ component Viewport inherits Rectangle {
         }
     }
     
-    // Minimap in bottom right - declared AFTER touch area so it receives events first
+    // Input handling - declared AFTER content so it's on top and captures all events
+    // Declared BEFORE minimap so minimap is on top and can receive its own events
+    touch := TouchArea {
+        width: 100%;
+        height: parent.height - 24px; // Only cover the viewport area, not status bar
+        
+        property <length> drag-start-x;
+        property <length> drag-start-y;
+        property <bool> is-dragging: false;
+        property <bool> is-tool-dragging: false;
+        
+        pointer-event(e) => {
+            // Right mouse button: always pan regardless of tool
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                self.is-dragging = true;
+                self.drag-start-x = self.mouse-x;
+                self.drag-start-y = self.mouse-y;
+                root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
+            } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                self.is-dragging = false;
+                root.end-pan();
+            }
+            // Left mouse button: tool-dependent behavior
+            else if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                if root.current-tool == ToolType.navigate {
+                    // Navigate tool: LMB also pans
+                    self.is-dragging = true;
+                    self.drag-start-x = self.mouse-x;
+                    self.drag-start-y = self.mouse-y;
+                    root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
+                } else {
+                    // Other tools: fire tool callback
+                    self.is-tool-dragging = true;
+                    root.tool-mouse-down(self.mouse-x / 1px, self.mouse-y / 1px);
+                }
+            } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                if root.current-tool == ToolType.navigate {
+                    self.is-dragging = false;
+                    root.end-pan();
+                } else {
+                    self.is-tool-dragging = false;
+                    root.tool-mouse-up(self.mouse-x / 1px, self.mouse-y / 1px);
+                }
+            }
+            // Handle move events
+            else if e.kind == PointerEventKind.move {
+                if self.is-dragging {
+                    let dx = (self.mouse-x - self.drag-start-x) / 1px;
+                    let dy = (self.mouse-y - self.drag-start-y) / 1px;
+                    self.drag-start-x = self.mouse-x;
+                    self.drag-start-y = self.mouse-y;
+                    root.pan(dx, dy);
+                } else if self.is-tool-dragging || root.current-tool != ToolType.navigate {
+                    root.tool-mouse-move(self.mouse-x / 1px, self.mouse-y / 1px);
+                }
+            }
+        }
+        
+        scroll-event(e) => {
+            let factor = e.delta-y > 0 ? 1.15 : (1.0 / 1.15);
+            root.zoom(factor, touch.mouse-x / 1px, touch.mouse-y / 1px);
+            return accept;
+        }
+    }
+    
+    // Minimap in bottom right - declared AFTER touch area so it receives events on top
     if show-minimap: Minimap {
         x: parent.width - self.width - 16px;
         y: parent.height - self.height - 16px - 24px;
@@ -700,8 +701,12 @@ component Viewport inherits Rectangle {
         }
     }
     
-    // Focus for keyboard input
-    FocusScope {
+    // Focus for keyboard input - positioned at end for keyboard events but doesn't block mouse
+    focus-scope := FocusScope {
+        x: 0px;
+        y: 0px;
+        width: 0px;
+        height: 0px;
         key-pressed(e) => {
             if e.text == "f" || e.text == "F" {
                 root.fit-to-view();
