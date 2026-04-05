@@ -4,7 +4,37 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-slint = "1.15.1"
+# Common crate
+common = { path = "../common" }
+
+# Slint UI
+slint = { version = "1.15.1", features = ["backend-winit"] }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "fs", "macros"] }
+
+# Image handling
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# File dialogs
+rfd = "0.15"
+
+# Thread-safe state
+parking_lot = "0.12"
+
+# Clipboard
+arboard = "3"
+
+# Process management (for Open Containing Folder)
+open = "5"
 
 [build-dependencies]
 slint-build = "1.15.1"

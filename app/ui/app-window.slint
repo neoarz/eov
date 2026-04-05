@@ -1,17 +1,675 @@
-import { Button, VerticalBox } from "std-widgets.slint";
+// EosMol WSI Viewer - Main Application Window
+
+import { Button, VerticalBox, HorizontalBox, ScrollView, ComboBox, LineEdit, Palette, StyleMetrics } from "std-widgets.slint";
+
+// Color scheme for professional look
+global Theme {
+    out property <color> background: #1e1e1e;
+    out property <color> surface: #252526;
+    out property <color> surface-hover: #2a2d2e;
+    out property <color> border: #3c3c3c;
+    out property <color> text-primary: #cccccc;
+    out property <color> text-secondary: #858585;
+    out property <color> accent: #0078d4;
+    out property <color> accent-hover: #1884d8;
+    out property <color> tab-active: #1e1e1e;
+    out property <color> tab-inactive: #2d2d2d;
+    out property <color> minimap-bg: #1e1e1ecc;
+    out property <color> minimap-rect: #0078d4aa;
+    out property <color> context-menu-bg: #3c3c3c;
+    out property <color> context-menu-hover: #094771;
+    out property <color> toolbar-bg: #323233;
+    out property <color> viewport-bg: #1a1a1a;
+    out property <color> error: #f44336;
+    out property <color> success: #4caf50;
+}
+
+// Tab data structure
+export struct TabData {
+    id: int,
+    title: string,
+    path: string,
+    is-modified: bool,
+    is-active: bool,
+}
+
+// Context menu item
+export struct ContextMenuItem {
+    id: string,
+    label: string,
+    shortcut: string,
+    enabled: bool,
+    separator-after: bool,
+}
+
+// Tile data for rendering
+export struct TileInfo {
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    level: int,
+}
+
+// Minimap rectangle
+export struct MinimapRect {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+}
+
+// Viewport state for rendering
+export struct ViewportInfo {
+    center-x: float,
+    center-y: float,
+    zoom: float,
+    image-width: float,
+    image-height: float,
+    level: int,
+}
+
+// ============ Custom Components ============
+
+// Icon button with hover effect
+component IconButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    
+    width: 32px;
+    height: 28px;
+    border-radius: 3px;
+    background: touch.has-hover && enabled ? Theme.surface-hover : transparent;
+    
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    
+    HorizontalLayout {
+        alignment: center;
+        Text {
+            text: root.text;
+            color: root.enabled ? Theme.text-primary : Theme.text-secondary;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Tab component
+component Tab inherits Rectangle {
+    in property <TabData> data;
+    in property <bool> is-dragging: false;
+    callback close-requested(int);
+    callback activated(int);
+    callback context-menu(int, length, length);
+    
+    min-width: 100px;
+    max-width: 200px;
+    height: 35px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    background: data.is-active ? Theme.tab-active : Theme.tab-inactive;
+    border-width: data.is-active ? 1px : 0px;
+    border-color: data.is-active ? Theme.accent : transparent;
+    
+    states [
+        hovered when touch.has-hover && !data.is-active: {
+            background: Theme.surface-hover;
+        }
+    ]
+    
+    touch := TouchArea {
+        clicked => { root.activated(data.id); }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.context-menu(data.id, self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+    
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 4px;
+        spacing: 8px;
+        
+        Text {
+            text: data.title + (data.is-modified ? " •" : "");
+            color: data.is-active ? Theme.text-primary : Theme.text-secondary;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        
+        Rectangle {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            background: close-touch.has-hover ? Theme.surface-hover : transparent;
+            
+            close-touch := TouchArea {
+                clicked => { root.close-requested(data.id); }
+            }
+            
+            Text {
+                text: "×";
+                color: close-touch.has-hover ? Theme.text-primary : Theme.text-secondary;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// Tab bar component
+component TabBar inherits Rectangle {
+    in property <[TabData]> tabs;
+    callback tab-activated(int);
+    callback tab-close-requested(int);
+    callback tab-context-menu(int, length, length);
+    
+    height: 35px;
+    background: Theme.surface;
+    
+    HorizontalLayout {
+        alignment: start;
+        
+        for tab in tabs: Tab {
+            data: tab;
+            close-requested(id) => { root.tab-close-requested(id); }
+            activated(id) => { root.tab-activated(id); }
+            context-menu(id, x, y) => { root.tab-context-menu(id, x, y); }
+        }
+        
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// Context menu
+component ContextMenu inherits Rectangle {
+    in property <[ContextMenuItem]> items;
+    in property <bool> is-visible: false;
+    in property <length> menu-x: 0px;
+    in property <length> menu-y: 0px;
+    callback item-clicked(string);
+    
+    x: menu-x;
+    y: menu-y;
+    width: root.is-visible ? 200px : 0px;
+    height: root.is-visible ? items.length * 28px : 0px;
+    background: Theme.context-menu-bg;
+    border-radius: 4px;
+    drop-shadow-blur: 8px;
+    drop-shadow-color: #00000066;
+    opacity: root.is-visible ? 1 : 0;
+    
+    // Backdrop to close menu on click outside
+    if root.is-visible: Rectangle {
+        x: -10000px;
+        y: -10000px;
+        width: 20000px;
+        height: 20000px;
+        
+        TouchArea {
+            clicked => { root.item-clicked("dismiss"); }
+        }
+    }
+    
+    VerticalLayout {
+        for item in items: Rectangle {
+            height: 28px;
+            background: item-touch.has-hover && item.enabled ? Theme.context-menu-hover : transparent;
+            
+            item-touch := TouchArea {
+                enabled: item.enabled;
+                clicked => { root.item-clicked(item.id); }
+            }
+            
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                
+                Text {
+                    text: item.label;
+                    color: item.enabled ? Theme.text-primary : Theme.text-secondary;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                
+                Rectangle { horizontal-stretch: 1; }
+                
+                Text {
+                    text: item.shortcut;
+                    color: Theme.text-secondary;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// Minimap component
+component Minimap inherits Rectangle {
+    in property <image> thumbnail;
+    in property <MinimapRect> viewport-rect;
+    callback navigate(float, float);
+    
+    width: 150px;
+    height: 150px;
+    background: Theme.minimap-bg;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    
+    // Thumbnail
+    Image {
+        x: 5px;
+        y: 5px;
+        width: parent.width - 10px;
+        height: parent.height - 10px;
+        source: thumbnail;
+        image-fit: contain;
+    }
+    
+    // Viewport indicator rectangle
+    Rectangle {
+        x: 5px + viewport-rect.x * (parent.width - 10px);
+        y: 5px + viewport-rect.y * (parent.height - 10px);
+        width: viewport-rect.width * (parent.width - 10px);
+        height: viewport-rect.height * (parent.height - 10px);
+        background: transparent;
+        border-width: 2px;
+        border-color: Theme.minimap-rect;
+    }
+    
+    TouchArea {
+        clicked => {
+            // Calculate normalized click position
+            let nx = (self.mouse-x - 5px) / (parent.width - 10px);
+            let ny = (self.mouse-y - 5px) / (parent.height - 10px);
+            root.navigate(nx, ny);
+        }
+    }
+}
+
+// Viewport component for WSI rendering
+component Viewport inherits Rectangle {
+    in property <image> content;
+    in property <ViewportInfo> viewport-info;
+    in property <image> minimap-thumbnail;
+    in property <MinimapRect> minimap-rect;
+    in property <bool> show-minimap: true;
+    in property <string> status-text: "";
+    in property <bool> is-loading: false;
+    
+    callback pan(float, float);
+    callback zoom(float, float, float);
+    callback fit-to-view();
+    callback start-pan(float, float);
+    callback end-pan();
+    
+    background: Theme.viewport-bg;
+    
+    // Main content area
+    Rectangle {
+        clip: true;
+        
+        // Rendered image
+        Image {
+            width: 100%;
+            height: 100%;
+            source: content;
+            image-fit: contain;
+        }
+        
+        // Loading indicator
+        if is-loading: Rectangle {
+            x: parent.width / 2 - 40px;
+            y: parent.height / 2 - 40px;
+            width: 80px;
+            height: 80px;
+            background: Theme.surface;
+            border-radius: 8px;
+            
+            Text {
+                text: "Loading...";
+                color: Theme.text-primary;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+    
+    // Minimap in bottom right
+    if show-minimap: Minimap {
+        x: parent.width - self.width - 16px;
+        y: parent.height - self.height - 16px - 24px;
+        thumbnail: minimap-thumbnail;
+        viewport-rect: minimap-rect;
+    }
+    
+    // Status bar
+    Rectangle {
+        x: 0;
+        y: parent.height - 24px;
+        width: 100%;
+        height: 24px;
+        background: Theme.toolbar-bg;
+        
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            
+            Text {
+                text: status-text;
+                color: Theme.text-secondary;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+            
+            Rectangle { horizontal-stretch: 1; }
+            
+            Text {
+                text: "Zoom: " + Math.round(viewport-info.zoom * 100) + "%";
+                color: Theme.text-secondary;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+    }
+    
+    // Input handling
+    touch := TouchArea {
+        property <length> drag-start-x;
+        property <length> drag-start-y;
+        property <bool> is-dragging: false;
+        
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                self.is-dragging = true;
+                self.drag-start-x = self.mouse-x;
+                self.drag-start-y = self.mouse-y;
+                root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
+            } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.right {
+                self.is-dragging = false;
+                root.end-pan();
+            } else if e.kind == PointerEventKind.move && self.is-dragging {
+                let dx = (self.mouse-x - self.drag-start-x) / 1px;
+                let dy = (self.mouse-y - self.drag-start-y) / 1px;
+                self.drag-start-x = self.mouse-x;
+                self.drag-start-y = self.mouse-y;
+                root.pan(dx, dy);
+            }
+        }
+        
+        scroll-event(e) => {
+            let factor = e.delta-y > 0 ? 1.15 : (1.0 / 1.15);
+            root.zoom(factor, touch.mouse-x / 1px, touch.mouse-y / 1px);
+            return accept;
+        }
+    }
+    
+    // Focus for keyboard input
+    FocusScope {
+        key-pressed(e) => {
+            if e.text == "f" || e.text == "F" {
+                root.fit-to-view();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// Split pane container supporting horizontal and vertical splits
+component SplitPaneContainer inherits Rectangle {
+    in property <[TabData]> tabs;
+    in property <image> viewport-content;
+    in property <ViewportInfo> viewport-info;
+    in property <image> minimap-thumbnail;
+    in property <MinimapRect> minimap-rect;
+    in property <string> status-text;
+    in property <bool> is-loading: false;
+    
+    callback tab-activated(int);
+    callback tab-close-requested(int);
+    callback tab-context-menu(int, length, length);
+    callback viewport-pan(float, float);
+    callback viewport-zoom(float, float, float);
+    callback viewport-fit-to-view();
+    callback viewport-start-pan(float, float);
+    callback viewport-end-pan();
+    
+    background: Theme.background;
+    
+    VerticalLayout {
+        // Tab bar
+        TabBar {
+            tabs: root.tabs;
+            tab-activated(id) => { root.tab-activated(id); }
+            tab-close-requested(id) => { root.tab-close-requested(id); }
+            tab-context-menu(id, x, y) => { root.tab-context-menu(id, x, y); }
+        }
+        
+        // Viewport
+        Viewport {
+            vertical-stretch: 1;
+            content: viewport-content;
+            viewport-info: root.viewport-info;
+            minimap-thumbnail: minimap-thumbnail;
+            minimap-rect: minimap-rect;
+            status-text: root.status-text;
+            is-loading: root.is-loading;
+            
+            pan(dx, dy) => { root.viewport-pan(dx, dy); }
+            zoom(f, x, y) => { root.viewport-zoom(f, x, y); }
+            fit-to-view => { root.viewport-fit-to-view(); }
+            start-pan(x, y) => { root.viewport-start-pan(x, y); }
+            end-pan => { root.viewport-end-pan(); }
+        }
+    }
+}
+
+// ============ Main Application Window ============
 
 export component AppWindow inherits Window {
-    in-out property <int> counter: 42;
-    callback request-increase-value();
-    VerticalBox {
-        Text {
-            text: "Counter: \{root.counter}";
+    title: "EosMol WSI Viewer";
+    min-width: 800px;
+    min-height: 600px;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: Theme.background;
+    
+    // Properties
+    in-out property <[TabData]> tabs: [];
+    in-out property <int> active-tab-id: -1;
+    in-out property <image> viewport-content;
+    in-out property <ViewportInfo> viewport-info;
+    in-out property <image> minimap-thumbnail;
+    in-out property <MinimapRect> minimap-rect: { x: 0, y: 0, width: 1, height: 1 };
+    in-out property <string> status-text: "Ready";
+    in-out property <bool> is-loading: false;
+    
+    // Context menu state
+    in-out property <bool> context-menu-visible: false;
+    in-out property <length> context-menu-x: 0px;
+    in-out property <length> context-menu-y: 0px;
+    in-out property <[ContextMenuItem]> context-menu-items: [];
+    in-out property <int> context-menu-tab-id: -1;
+    
+    // Callbacks
+    callback open-file-requested();
+    callback tab-activated(int);
+    callback tab-close-requested(int);
+    callback close-other-tabs(int);
+    callback close-tabs-to-right(int);
+    callback close-all-tabs();
+    callback open-containing-folder(int);
+    callback copy-path(int);
+    callback split-right(int);
+    callback viewport-pan(float, float);
+    callback viewport-zoom(float, float, float);
+    callback viewport-fit-to-view();
+    callback viewport-start-pan(float, float);
+    callback viewport-end-pan();
+    callback request-render();
+    
+    // Main layout
+    VerticalLayout {
+        // Toolbar
+        Rectangle {
+            height: 40px;
+            background: Theme.toolbar-bg;
+            border-width: 0px;
+            
+            HorizontalLayout {
+                padding: 4px;
+                spacing: 4px;
+                
+                IconButton {
+                    text: "📂 Open";
+                    clicked => { root.open-file-requested(); }
+                }
+                
+                Rectangle {
+                    width: 1px;
+                    height: 24px;
+                    background: Theme.border;
+                }
+                
+                // Spacer
+                Rectangle { horizontal-stretch: 1; }
+                
+                // App title on right side
+                Text {
+                    text: "EosMol";
+                    color: Theme.text-secondary;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
         }
-
-        Button {
-            text: "Increase value";
-            clicked => {
-                root.request-increase-value();
+        
+        // Main content area
+        Rectangle {
+            vertical-stretch: 1;
+            
+            if tabs.length > 0: SplitPaneContainer {
+                tabs: root.tabs;
+                viewport-content: root.viewport-content;
+                viewport-info: root.viewport-info;
+                minimap-thumbnail: root.minimap-thumbnail;
+                minimap-rect: root.minimap-rect;
+                status-text: root.status-text;
+                is-loading: root.is-loading;
+                
+                tab-activated(id) => { root.tab-activated(id); }
+                tab-close-requested(id) => { root.tab-close-requested(id); }
+                tab-context-menu(id, x, y) => {
+                    root.context-menu-tab-id = id;
+                    root.context-menu-x = x + 0px; // Offset for tab bar position
+                    root.context-menu-y = y + 75px; // Account for toolbar + tab bar
+                    root.context-menu-items = [
+                        { id: "close", label: "Close", shortcut: "Ctrl+W", enabled: true, separator-after: false },
+                        { id: "close-others", label: "Close Others", shortcut: "", enabled: tabs.length > 1, separator-after: false },
+                        { id: "close-right", label: "Close to the Right", shortcut: "", enabled: true, separator-after: false },
+                        { id: "close-all", label: "Close All", shortcut: "", enabled: true, separator-after: true },
+                        { id: "open-folder", label: "Open Containing Folder", shortcut: "", enabled: true, separator-after: false },
+                        { id: "copy-path", label: "Copy Path", shortcut: "", enabled: true, separator-after: true },
+                        { id: "split-right", label: "Split Right", shortcut: "", enabled: true, separator-after: false },
+                    ];
+                    root.context-menu-visible = true;
+                }
+                viewport-pan(dx, dy) => { root.viewport-pan(dx, dy); }
+                viewport-zoom(f, x, y) => { root.viewport-zoom(f, x, y); }
+                viewport-fit-to-view => { root.viewport-fit-to-view(); }
+                viewport-start-pan(x, y) => { root.viewport-start-pan(x, y); }
+                viewport-end-pan => { root.viewport-end-pan(); }
+            }
+            
+            // Empty state
+            if tabs.length == 0: Rectangle {
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 16px;
+                    
+                    Text {
+                        text: "🔬";
+                        font-size: 64px;
+                        horizontal-alignment: center;
+                    }
+                    
+                    Text {
+                        text: "No files open";
+                        color: Theme.text-secondary;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                    }
+                    
+                    Text {
+                        text: "Click Open to browse for WSI files";
+                        color: Theme.text-secondary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                    }
+                    
+                    Rectangle { height: 16px; }
+                    
+                    Rectangle {
+                        width: 120px;
+                        height: 36px;
+                        background: Theme.accent;
+                        border-radius: 4px;
+                        
+                        TouchArea {
+                            clicked => { root.open-file-requested(); }
+                        }
+                        
+                        Text {
+                            text: "Open File";
+                            color: white;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Context menu overlay
+    ContextMenu {
+        items: context-menu-items;
+        is-visible: context-menu-visible;
+        menu-x: context-menu-x;
+        menu-y: context-menu-y;
+        
+        item-clicked(id) => {
+            root.context-menu-visible = false;
+            
+            if id == "close" {
+                root.tab-close-requested(root.context-menu-tab-id);
+            } else if id == "close-others" {
+                root.close-other-tabs(root.context-menu-tab-id);
+            } else if id == "close-right" {
+                root.close-tabs-to-right(root.context-menu-tab-id);
+            } else if id == "close-all" {
+                root.close-all-tabs();
+            } else if id == "open-folder" {
+                root.open-containing-folder(root.context-menu-tab-id);
+            } else if id == "copy-path" {
+                root.copy-path(root.context-menu-tab-id);
+            } else if id == "split-right" {
+                root.split-right(root.context-menu-tab-id);
             }
         }
     }
