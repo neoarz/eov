@@ -6,3 +6,4 @@ notes.txt
 .env.test
 !.env.test.example
 lean/.lake
+fixtures/
