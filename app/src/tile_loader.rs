@@ -163,24 +163,29 @@ fn worker_loop(
 /// 
 /// This searches lower-resolution (higher mip) levels for a tile that covers
 /// the same area as the target tile. Returns the covering tile if found in cache.
+#[allow(dead_code)]
 pub fn find_fallback_tile(
     cache: &TileCache,
     wsi: &WsiFile,
     target: TileCoord,
+    tile_size: u32,
 ) -> Option<(Arc<TileData>, u32)> {
     let level_count = wsi.level_count();
     
-    // Search lower-resolution levels (higher indices)
+    // Get target tile's position in level-0 (image) coordinates
+    let target_level_info = wsi.level(target.level)?;
+    let target_image_x = target.x as f64 * tile_size as f64 * target_level_info.downsample;
+    let target_image_y = target.y as f64 * tile_size as f64 * target_level_info.downsample;
+    
+    // Search lower-resolution levels (higher indices = lower resolution)
     for fallback_level in (target.level + 1)..level_count {
-        let target_level_info = wsi.level(target.level)?;
         let fallback_level_info = wsi.level(fallback_level)?;
         
-        // Calculate the scale factor between levels
-        let scale = fallback_level_info.downsample / target_level_info.downsample;
-        
-        // Calculate which tile at the fallback level covers this area
-        let fallback_x = (target.x as f64 / scale) as u64;
-        let fallback_y = (target.y as f64 / scale) as u64;
+        // Calculate which tile at the fallback level contains this image position
+        // Each fallback tile covers (tile_size * downsample) pixels in image coordinates
+        let fallback_tile_image_size = tile_size as f64 * fallback_level_info.downsample;
+        let fallback_x = (target_image_x / fallback_tile_image_size).floor() as u64;
+        let fallback_y = (target_image_y / fallback_tile_image_size).floor() as u64;
         
         let fallback_coord = TileCoord::new(fallback_level, fallback_x, fallback_y);
         
@@ -193,6 +198,7 @@ pub fn find_fallback_tile(
 }
 
 /// Calculate the sub-region of a fallback tile that corresponds to the target tile
+#[allow(dead_code)]
 pub struct FallbackRegion {
     /// Source X offset within the fallback tile (0.0-1.0)
     pub src_x: f64,
@@ -204,27 +210,34 @@ pub struct FallbackRegion {
     pub src_h: f64,
 }
 
+#[allow(dead_code)]
 pub fn calculate_fallback_region(
     wsi: &WsiFile,
     target: TileCoord,
     fallback_level: u32,
+    tile_size: u32,
 ) -> Option<FallbackRegion> {
     let target_level_info = wsi.level(target.level)?;
     let fallback_level_info = wsi.level(fallback_level)?;
     
-    let scale = fallback_level_info.downsample / target_level_info.downsample;
+    // Get target tile's position in level-0 (image) coordinates
+    let target_image_x = target.x as f64 * tile_size as f64 * target_level_info.downsample;
+    let target_image_y = target.y as f64 * tile_size as f64 * target_level_info.downsample;
+    let target_image_w = tile_size as f64 * target_level_info.downsample;
+    let target_image_h = tile_size as f64 * target_level_info.downsample;
     
-    // Calculate which fallback tile and the position within it
-    let fallback_x = (target.x as f64 / scale) as u64;
-    let fallback_y = (target.y as f64 / scale) as u64;
+    // Calculate the fallback tile's position in image coordinates
+    let fallback_tile_image_size = tile_size as f64 * fallback_level_info.downsample;
+    let fallback_x = (target_image_x / fallback_tile_image_size).floor() as u64;
+    let fallback_y = (target_image_y / fallback_tile_image_size).floor() as u64;
+    let fallback_image_x = fallback_x as f64 * fallback_tile_image_size;
+    let fallback_image_y = fallback_y as f64 * fallback_tile_image_size;
     
-    // Calculate the fractional position within the fallback tile
-    let frac_x = (target.x as f64 / scale) - fallback_x as f64;
-    let frac_y = (target.y as f64 / scale) - fallback_y as f64;
-    
-    // The fraction of the fallback tile that this target tile covers
-    let frac_w = (1.0 / scale).min(1.0 - frac_x);
-    let frac_h = (1.0 / scale).min(1.0 - frac_y);
+    // Calculate the fractional position within the fallback tile (0.0-1.0)
+    let frac_x = (target_image_x - fallback_image_x) / fallback_tile_image_size;
+    let frac_y = (target_image_y - fallback_image_y) / fallback_tile_image_size;
+    let frac_w = (target_image_w / fallback_tile_image_size).min(1.0 - frac_x);
+    let frac_h = (target_image_h / fallback_tile_image_size).min(1.0 - frac_y);
     
     Some(FallbackRegion {
         src_x: frac_x,

@@ -6,13 +6,12 @@ mod render;
 mod tile_loader;
 
 use anyhow::Result;
-use common::{TileCache, TileCoord, TileManager, ViewportState, WsiFile};
+use common::{TileCache, TileManager, ViewportState, WsiFile};
 use parking_lot::RwLock;
 use rfd::FileDialog;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 use state::{AppState, OpenFile, PaneId};
-use tile_loader::{TileLoader, find_fallback_tile, calculate_fallback_region, calculate_wanted_tiles};
-use std::io::Write;
+use tile_loader::{TileLoader, calculate_wanted_tiles};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -971,83 +970,83 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     };
     dbg_print!("[RENDER] got level_info: downsample={}", level_info.downsample);
     
-    // First pass: render fallback tiles for any missing high-res tiles
-    // This shows lower-res data while high-res tiles are loading
-    let mut fallbacks_rendered = 0;
-    for coord in &visible_tiles {
-        if tile_cache.contains(coord) {
-            continue; // Will be rendered in second pass
+    // First pass: render lower-resolution fallback tiles
+    // These provide immediate visual feedback while high-res tiles load
+    // We render ALL cached low-res tiles that overlap the viewport, then high-res tiles overdraw
+    let mut _fallbacks_rendered = 0;
+    let level_count = file.wsi.level_count();
+    
+    // Iterate from lowest resolution (highest level index) to one above current
+    // This ensures higher quality fallbacks draw on top of lower quality ones
+    for fallback_level in (0..level_count).rev() {
+        if fallback_level <= level {
+            continue; // Skip current and higher resolution levels
         }
         
-        // Find a fallback tile from lower-resolution levels
-        if let Some((fallback_tile, fallback_level)) = find_fallback_tile(tile_cache, &file.wsi, *coord) {
-            // Validate tile data
-            let expected_size = (fallback_tile.width * fallback_tile.height * 4) as usize;
-            if fallback_tile.data.len() != expected_size {
+        let fallback_level_info = match file.wsi.level(fallback_level) {
+            Some(info) => info,
+            None => continue,
+        };
+        
+        // Get visible tiles at this fallback level
+        let fallback_tiles = file.tile_manager.visible_tiles(
+            fallback_level,
+            bounds.left,
+            bounds.top,
+            bounds.right,
+            bounds.bottom,
+        );
+        
+        for fb_coord in fallback_tiles.iter().take(100) {
+            let Some(fallback_tile) = tile_cache.get(fb_coord) else {
                 continue;
-            }
+            };
             
-            let tile_x = coord.x as f64 * tile_size as f64;
-            let tile_y = coord.y as f64 * tile_size as f64;
+            // Calculate screen position for this fallback tile
+            // Each fallback tile covers (tile_size * fallback_downsample) pixels in image space
+            let fb_tile_x = fb_coord.x as f64 * tile_size as f64;
+            let fb_tile_y = fb_coord.y as f64 * tile_size as f64;
             
-            let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
-            let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
-            let screen_x_end = (((tile_x + tile_size as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
-            let screen_y_end = (((tile_y + tile_size as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
-            let screen_w = screen_x_end - screen_x;
-            let screen_h = screen_y_end - screen_y;
+            // Convert to image coordinates (level 0) and then to screen
+            let fb_image_x = fb_tile_x * fallback_level_info.downsample;
+            let fb_image_y = fb_tile_y * fallback_level_info.downsample;
+            let fb_image_w = fallback_tile.width as f64 * fallback_level_info.downsample;
+            let fb_image_h = fallback_tile.height as f64 * fallback_level_info.downsample;
             
-            // Skip if entirely off-screen or invalid size
+            let screen_x = ((fb_image_x - bounds.left) * vp.zoom).floor() as i32;
+            let screen_y = ((fb_image_y - bounds.top) * vp.zoom).floor() as i32;
+            let screen_w = (fb_image_w * vp.zoom).ceil() as i32;
+            let screen_h = (fb_image_h * vp.zoom).ceil() as i32;
+            
             if screen_w <= 0 || screen_h <= 0 {
                 continue;
             }
             
-            if let Some(region) = calculate_fallback_region(&file.wsi, *coord, fallback_level) {
-                // Validate region bounds
-                if region.src_x < 0.0 || region.src_y < 0.0 || 
-                   region.src_x + region.src_w > 1.0 || region.src_y + region.src_h > 1.0 {
-                    continue;
-                }
-                
-                // Calculate actual source pixel dimensions
-                let src_pixel_w = (region.src_w * fallback_tile.width as f64).ceil() as u32;
-                let src_pixel_h = (region.src_h * fallback_tile.height as f64).ceil() as u32;
-                
-                // Skip if source region is too small - this causes stretched single-pixel artifacts
-                // Need at least 2x2 source pixels for reasonable interpolation
-                if src_pixel_w < 2 || src_pixel_h < 2 {
-                    continue;
-                }
-                
-                blit_tile_region(
-                    buffer,
-                    render_width,
-                    render_height,
-                    &fallback_tile.data,
-                    fallback_tile.width,
-                    fallback_tile.height,
-                    region.src_x,
-                    region.src_y,
-                    region.src_w,
-                    region.src_h,
-                    screen_x,
-                    screen_y,
-                    screen_w,
-                    screen_h,
-                );
-                fallbacks_rendered += 1;
-            }
+            // Render the entire fallback tile at its correct screen position
+            blit_tile(
+                buffer,
+                render_width,
+                render_height,
+                &fallback_tile.data,
+                fallback_tile.width,
+                fallback_tile.height,
+                screen_x,
+                screen_y,
+                screen_w,
+                screen_h,
+            );
+            _fallbacks_rendered += 1;
         }
     }
     
-    dbg_print!("[RENDER] first pass: rendered {} fallbacks", fallbacks_rendered);
+    dbg_print!("[RENDER] first pass: rendered {} fallbacks", _fallbacks_rendered);
     
     dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", visible_tiles.len());
     
-    // Second pass: render high-res tiles that are available
-    let mut tiles_blitted = 0;
-    for (i, coord) in visible_tiles.iter().enumerate() {
-        dbg_print!("[RENDER] tile {} of {}: {:?}", i, visible_tiles.len(), coord);
+    // Second pass: render high-res tiles that are available (these overdraw fallbacks)
+    let mut _tiles_blitted = 0;
+    for (_i, coord) in visible_tiles.iter().enumerate() {
+        dbg_print!("[RENDER] tile {} of {}: {:?}", _i, visible_tiles.len(), coord);
         let Some(tile_data) = tile_cache.get(coord) else {
             dbg_print!("[RENDER] tile {:?} not in cache, skip", coord);
             continue;
@@ -1078,11 +1077,11 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             screen_w,
             screen_h,
         );
-        tiles_blitted += 1;
-        dbg_print!("[RENDER] blit done, total={}", tiles_blitted);
+        _tiles_blitted += 1;
+        dbg_print!("[RENDER] blit done, total={}", _tiles_blitted);
     }
     
-    dbg_print!("[RENDER] blitted {} tiles total", tiles_blitted);
+    dbg_print!("[RENDER] blitted {} tiles total", _tiles_blitted);
     
     dbg_print!("[RENDER] creating image buffer");
     
@@ -1150,59 +1149,65 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         None => return,
     };
     
-    // First pass: render fallback tiles for missing high-res tiles
-    for coord in &visible_tiles {
-        if tile_cache.contains(coord) {
-            continue;
+    let level_count = file.wsi.level_count();
+    
+    // First pass: render fallback tiles (whole tiles at lower resolutions)
+    // Iterate from lowest resolution to highest, so better quality draws on top
+    for fallback_level in (0..level_count).rev() {
+        if fallback_level <= level {
+            continue; // Skip current and higher resolution levels
         }
         
-        if let Some((fallback_tile, fallback_level)) = find_fallback_tile(tile_cache, &file.wsi, *coord) {
-            let tile_x = coord.x as f64 * tile_size as f64;
-            let tile_y = coord.y as f64 * tile_size as f64;
+        let fallback_level_info = match file.wsi.level(fallback_level) {
+            Some(info) => info,
+            None => continue,
+        };
+        
+        // Get visible tiles at this fallback level
+        let fallback_tiles = file.tile_manager.visible_tiles(
+            fallback_level,
+            bounds.left,
+            bounds.top,
+            bounds.right,
+            bounds.bottom,
+        );
+        
+        for fb_coord in fallback_tiles.iter().take(100) {
+            let Some(fallback_tile) = tile_cache.get(fb_coord) else {
+                continue;
+            };
             
-            let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
-            let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
-            let screen_x_end = (((tile_x + tile_size as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
-            let screen_y_end = (((tile_y + tile_size as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
-            let screen_w = screen_x_end - screen_x;
-            let screen_h = screen_y_end - screen_y;
+            // Calculate screen position for this fallback tile
+            let fb_tile_x = fb_coord.x as f64 * tile_size as f64;
+            let fb_tile_y = fb_coord.y as f64 * tile_size as f64;
+            
+            // Convert to image coordinates (level 0) and then to screen
+            let fb_image_x = fb_tile_x * fallback_level_info.downsample;
+            let fb_image_y = fb_tile_y * fallback_level_info.downsample;
+            let fb_image_w = fallback_tile.width as f64 * fallback_level_info.downsample;
+            let fb_image_h = fallback_tile.height as f64 * fallback_level_info.downsample;
+            
+            let screen_x = ((fb_image_x - bounds.left) * vp.zoom).floor() as i32;
+            let screen_y = ((fb_image_y - bounds.top) * vp.zoom).floor() as i32;
+            let screen_w = (fb_image_w * vp.zoom).ceil() as i32;
+            let screen_h = (fb_image_h * vp.zoom).ceil() as i32;
             
             if screen_w <= 0 || screen_h <= 0 {
                 continue;
             }
             
-            if let Some(region) = calculate_fallback_region(&file.wsi, *coord, fallback_level) {
-                if region.src_x < 0.0 || region.src_y < 0.0 || 
-                   region.src_x + region.src_w > 1.0 || region.src_y + region.src_h > 1.0 {
-                    continue;
-                }
-                
-                // Calculate actual source pixel dimensions
-                let src_pixel_w = (region.src_w * fallback_tile.width as f64).ceil() as u32;
-                let src_pixel_h = (region.src_h * fallback_tile.height as f64).ceil() as u32;
-                
-                // Skip if source region is too small
-                if src_pixel_w < 2 || src_pixel_h < 2 {
-                    continue;
-                }
-                
-                blit_tile_region(
-                    &mut buffer,
-                    render_width,
-                    render_height,
-                    &fallback_tile.data,
-                    fallback_tile.width,
-                    fallback_tile.height,
-                    region.src_x,
-                    region.src_y,
-                    region.src_w,
-                    region.src_h,
-                    screen_x,
-                    screen_y,
-                    screen_w,
-                    screen_h,
-                );
-            }
+            blit_tile(
+                &mut buffer,
+                render_width,
+                render_height,
+                &fallback_tile.data,
+                fallback_tile.width,
+                fallback_tile.height,
+                screen_x,
+                screen_y,
+                screen_w,
+                screen_h,
+            );
         }
     }
     
@@ -1279,73 +1284,6 @@ fn blit_tile(
         for x in start_x..end_x {
             let src_x = (((x as i32 - dest_x) as f64 * scale_x) as u32).min(src_width - 1);
             let src_y = (((y as i32 - dest_y) as f64 * scale_y) as u32).min(src_height - 1);
-            
-            let src_idx = ((src_y * src_width + src_x) * 4) as usize;
-            let dest_idx = ((y * dest_width + x) * 4) as usize;
-            
-            if src_idx + 3 < src.len() && dest_idx + 3 < dest.len() {
-                dest[dest_idx] = src[src_idx];
-                dest[dest_idx + 1] = src[src_idx + 1];
-                dest[dest_idx + 2] = src[src_idx + 2];
-                dest[dest_idx + 3] = src[src_idx + 3];
-            }
-        }
-    }
-}
-
-/// Blit a sub-region of a source tile to the destination buffer
-/// src_region_* are normalized (0.0-1.0) coordinates within the source tile
-fn blit_tile_region(
-    dest: &mut [u8],
-    dest_width: u32,
-    dest_height: u32,
-    src: &[u8],
-    src_width: u32,
-    src_height: u32,
-    src_region_x: f64,
-    src_region_y: f64,
-    src_region_w: f64,
-    src_region_h: f64,
-    dest_x: i32,
-    dest_y: i32,
-    scaled_width: i32,
-    scaled_height: i32,
-) {
-    if scaled_width <= 0 || scaled_height <= 0 || src_region_w <= 0.0 || src_region_h <= 0.0 {
-        return;
-    }
-    
-    // Early return if tile is entirely off-screen
-    if dest_x + scaled_width <= 0 || dest_y + scaled_height <= 0 {
-        return;
-    }
-    if dest_x >= dest_width as i32 || dest_y >= dest_height as i32 {
-        return;
-    }
-    
-    // Calculate source pixel region
-    let src_start_x = (src_region_x * src_width as f64) as u32;
-    let src_start_y = (src_region_y * src_height as f64) as u32;
-    let src_pixel_w = (src_region_w * src_width as f64).ceil() as u32;
-    let src_pixel_h = (src_region_h * src_height as f64).ceil() as u32;
-    
-    if src_pixel_w == 0 || src_pixel_h == 0 {
-        return;
-    }
-    
-    let scale_x = src_pixel_w as f64 / scaled_width as f64;
-    let scale_y = src_pixel_h as f64 / scaled_height as f64;
-    
-    // Calculate visible region (clamp to destination bounds)
-    let start_x = dest_x.max(0) as u32;
-    let start_y = dest_y.max(0) as u32;
-    let end_x = (dest_x + scaled_width).min(dest_width as i32) as u32;
-    let end_y = (dest_y + scaled_height).min(dest_height as i32) as u32;
-    
-    for y in start_y..end_y {
-        for x in start_x..end_x {
-            let src_x = (src_start_x + ((x as i32 - dest_x) as f64 * scale_x) as u32).min(src_width - 1);
-            let src_y = (src_start_y + ((y as i32 - dest_y) as f64 * scale_y) as u32).min(src_height - 1);
             
             let src_idx = ((src_y * src_width + src_x) * 4) as usize;
             let dest_idx = ((y * dest_width + x) * 4) as usize;
