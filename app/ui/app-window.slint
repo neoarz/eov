@@ -76,6 +76,7 @@ export struct ROIRect {
     width: float,
     height: float,
     visible: bool,
+    ant-offset: float,  // For marching ants animation (0-16)
 }
 
 // Measurement line
@@ -490,20 +491,114 @@ component Viewport inherits Rectangle {
             image-fit: fill;
         }
         
-        // ROI overlay - dimmed area outside the rectangle
+        // ROI overlay - dim area OUTSIDE the selected rectangle
         if root.roi-rect.visible: Rectangle {
-            // Dim the entire viewport
-            background: #00000080;
+            // We create 4 rectangles to dim around the ROI (letterbox effect)
+            // Top dim bar
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: root.roi-rect.y * 1px;
+                background: #00000080;
+            }
+            // Bottom dim bar  
+            Rectangle {
+                x: 0;
+                y: (root.roi-rect.y + root.roi-rect.height) * 1px;
+                width: 100%;
+                height: parent.height - (root.roi-rect.y + root.roi-rect.height) * 1px;
+                background: #00000080;
+            }
+            // Left dim bar (between top and bottom)
+            Rectangle {
+                x: 0;
+                y: root.roi-rect.y * 1px;
+                width: root.roi-rect.x * 1px;
+                height: root.roi-rect.height * 1px;
+                background: #00000080;
+            }
+            // Right dim bar (between top and bottom)
+            Rectangle {
+                x: (root.roi-rect.x + root.roi-rect.width) * 1px;
+                y: root.roi-rect.y * 1px;
+                width: parent.width - (root.roi-rect.x + root.roi-rect.width) * 1px;
+                height: root.roi-rect.height * 1px;
+                background: #00000080;
+            }
             
-            // Clear rectangle for the ROI area
+            // Marching ants border - outer black ring
+            Rectangle {
+                x: root.roi-rect.x * 1px - 1px;
+                y: root.roi-rect.y * 1px - 1px;
+                width: root.roi-rect.width * 1px + 2px;
+                height: root.roi-rect.height * 1px + 2px;
+                background: transparent;
+                border-width: 1px;
+                border-color: black;
+            }
+            
+            // Marching ants border - inner black ring (creates contrast)
+            Rectangle {
+                x: root.roi-rect.x * 1px + 1px;
+                y: root.roi-rect.y * 1px + 1px;
+                width: root.roi-rect.width * 1px - 2px;
+                height: root.roi-rect.height * 1px - 2px;
+                background: transparent;
+                border-width: 1px;
+                border-color: black;
+            }
+            
+            // Animated white center border
             Rectangle {
                 x: root.roi-rect.x * 1px;
                 y: root.roi-rect.y * 1px;
                 width: root.roi-rect.width * 1px;
                 height: root.roi-rect.height * 1px;
                 background: transparent;
-                border-width: 2px;
-                border-color: #ffcc00;
+                border-width: 1px;
+                border-color: white;
+                clip: true;
+                
+                // Create animated stripe pattern (ant-offset cycles 0-16 from Rust)
+                property <length> stripe-period: 16px;
+                property <length> stripe-offset: root.roi-rect.ant-offset * 1px;
+                
+                // Top edge stripes
+                for i in 100: Rectangle {
+                    x: i * parent.stripe-period - parent.stripe-offset;
+                    y: -1px;
+                    width: parent.stripe-period / 2;
+                    height: 3px;
+                    background: black;
+                }
+                
+                // Bottom edge stripes
+                for i in 100: Rectangle {
+                    x: i * parent.stripe-period - parent.stripe-period + parent.stripe-offset;
+                    y: parent.height - 2px;
+                    width: parent.stripe-period / 2;
+                    height: 3px;
+                    background: black;
+                }
+                
+                // Left edge stripes  
+                for i in 100: Rectangle {
+                    x: -1px;
+                    y: i * parent.stripe-period - parent.stripe-offset;
+                    width: 3px;
+                    height: parent.stripe-period / 2;
+                    background: black;
+                }
+                
+                // Right edge stripes
+                for i in 100: Rectangle {
+                    x: parent.width - 2px;
+                    y: i * parent.stripe-period - parent.stripe-period + parent.stripe-offset;
+                    width: 3px;
+                    height: parent.stripe-period / 2;
+                    background: black;
+                }
             }
         }
         

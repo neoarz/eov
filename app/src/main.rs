@@ -631,6 +631,15 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     let split_enabled = state.split_enabled;
     let split_position = state.split_position;
     
+    // Capture tool state for ROI calculation (before borrowing file mutably)
+    let tool_state = state.tool_state;
+    let candidate_point = state.candidate_point;
+    let current_tool = state.current_tool;
+    
+    // Update ant offset for marching ants animation (0.5 pixels per frame at 60fps = 30 pixels/sec)
+    state.ant_offset = (state.ant_offset + 0.5) % 16.0;
+    let ant_offset = state.ant_offset;
+    
     let Some(file) = state.open_files.iter_mut().find(|f| f.id == file_id) else {
         return;
     };
@@ -690,6 +699,52 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     
     // Render primary viewport
     render_viewport_to_buffer(ui, file, tile_cache, true);
+    
+    // Update ROI overlay (must be done every frame for proper tracking)
+    // Re-borrow viewport since render_viewport_to_buffer takes &mut
+    let vp = &file.viewport.viewport;
+    let bounds = vp.bounds();
+    
+    // Check for in-progress ROI (during drag) first, then committed ROI
+    let roi_to_display = if current_tool == state::Tool::RegionOfInterest {
+        if let state::ToolInteractionState::Dragging(start) = tool_state {
+            if let Some(end) = candidate_point {
+                // Calculate in-progress ROI from drag points
+                Some(state::RegionOfInterest::from_points(start, end))
+            } else {
+                file.roi
+            }
+        } else {
+            file.roi
+        }
+    } else {
+        file.roi
+    };
+    
+    if let Some(roi) = roi_to_display {
+        let screen_x = (roi.x - bounds.left) * vp.zoom;
+        let screen_y = (roi.y - bounds.top) * vp.zoom;
+        let screen_w = roi.width * vp.zoom;
+        let screen_h = roi.height * vp.zoom;
+        
+        ui.set_roi_rect(ROIRect {
+            x: screen_x as f32,
+            y: screen_y as f32,
+            width: screen_w as f32,
+            height: screen_h as f32,
+            visible: true,
+            ant_offset,
+        });
+    } else {
+        ui.set_roi_rect(ROIRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+            visible: false,
+            ant_offset,
+        });
+    }
     
     // Handle secondary viewport if split is enabled
     if split_enabled {
@@ -978,6 +1033,7 @@ fn update_tool_overlays(ui: &AppWindow, state: &AppState) {
     let vp = &viewport_state.viewport;
     
     // Update ROI overlay
+    let ant_offset = state.ant_offset;
     if let Some(roi) = &file.roi {
         let bounds = vp.bounds();
         let screen_x = (roi.x - bounds.left) * vp.zoom;
@@ -991,6 +1047,7 @@ fn update_tool_overlays(ui: &AppWindow, state: &AppState) {
             width: screen_w as f32,
             height: screen_h as f32,
             visible: true,
+            ant_offset,
         });
     } else {
         ui.set_roi_rect(ROIRect {
@@ -999,6 +1056,7 @@ fn update_tool_overlays(ui: &AppWindow, state: &AppState) {
             width: 0.0,
             height: 0.0,
             visible: false,
+            ant_offset,
         });
     }
     
@@ -1027,6 +1085,7 @@ fn update_tool_overlays(ui: &AppWindow, state: &AppState) {
                     width: screen_w as f32,
                     height: screen_h as f32,
                     visible: true,
+                    ant_offset,
                 });
             } else {
                 // For measurement, update candidate line

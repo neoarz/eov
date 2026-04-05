@@ -126,6 +126,8 @@ pub struct AppState {
     pub tool_state: ToolInteractionState,
     /// Candidate point (for visual feedback during tool use)
     pub candidate_point: Option<ImagePoint>,
+    /// Animation offset for marching ants (wraps at 16)
+    pub ant_offset: f32,
 }
 
 impl AppState {
@@ -141,6 +143,7 @@ impl AppState {
             current_tool: Tool::Navigate,
             tool_state: ToolInteractionState::Idle,
             candidate_point: None,
+            ant_offset: 0.0,
         }
     }
 
@@ -183,6 +186,10 @@ impl AppState {
         self.current_tool = tool;
         self.tool_state = ToolInteractionState::Idle;
         self.candidate_point = None;
+        // Clear ROI when switching tools
+        if let Some(file) = self.open_files.iter_mut().find(|f| Some(f.id) == self.active_file_id) {
+            file.roi = None;
+        }
     }
     
     /// Cancel current tool operation and return to Navigate
@@ -190,6 +197,10 @@ impl AppState {
         self.tool_state = ToolInteractionState::Idle;
         self.candidate_point = None;
         self.current_tool = Tool::Navigate;
+        // Clear ROI when cancelling
+        if let Some(file) = self.open_files.iter_mut().find(|f| Some(f.id) == self.active_file_id) {
+            file.roi = None;
+        }
     }
 
     /// Enable split view for the current file
