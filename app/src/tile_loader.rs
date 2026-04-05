@@ -246,10 +246,10 @@ pub fn calculate_wanted_tiles(
     let mut wanted = Vec::new();
     let level_count = tile_manager.wsi().level_count();
     
-    // First, add lower-resolution tiles (higher level indices = lower resolution)
-    // These load faster and provide immediate visual feedback while high-res tiles load
-    // Start from lowest resolution (level_count-1) and work toward current level
-    for fallback_level in ((level + 1)..level_count).rev() {
+    // First, add lower-resolution tiles for fallback display
+    // Prioritize levels CLOSEST to current level (one level up is best fallback quality)
+    // These tiles have enough pixels to display properly even when zoomed in
+    for fallback_level in (level + 1)..level_count {
         let fallback_tiles = tile_manager.visible_tiles(
             fallback_level,
             bounds_left,
@@ -258,8 +258,10 @@ pub fn calculate_wanted_tiles(
             bounds_bottom,
         );
         
-        // Low-res levels have fewer tiles, so load more of them
-        let tiles_at_this_level = fallback_tiles.len().min(50);
+        // Closer levels (smaller fallback_level - level) get more tiles loaded
+        // as they provide better fallback quality
+        let priority_boost = level_count.saturating_sub(fallback_level);
+        let tiles_at_this_level = (fallback_tiles.len().min(20) + priority_boost as usize * 10).min(50);
         wanted.extend(fallback_tiles.iter().take(tiles_at_this_level).copied());
     }
     

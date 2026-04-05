@@ -1009,6 +1009,16 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
                     continue;
                 }
                 
+                // Calculate actual source pixel dimensions
+                let src_pixel_w = (region.src_w * fallback_tile.width as f64).ceil() as u32;
+                let src_pixel_h = (region.src_h * fallback_tile.height as f64).ceil() as u32;
+                
+                // Skip if source region is too small - this causes stretched single-pixel artifacts
+                // Need at least 2x2 source pixels for reasonable interpolation
+                if src_pixel_w < 2 || src_pixel_h < 2 {
+                    continue;
+                }
+                
                 blit_tile_region(
                     buffer,
                     render_width,
@@ -1166,6 +1176,16 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
                    region.src_x + region.src_w > 1.0 || region.src_y + region.src_h > 1.0 {
                     continue;
                 }
+                
+                // Calculate actual source pixel dimensions
+                let src_pixel_w = (region.src_w * fallback_tile.width as f64).ceil() as u32;
+                let src_pixel_h = (region.src_h * fallback_tile.height as f64).ceil() as u32;
+                
+                // Skip if source region is too small
+                if src_pixel_w < 2 || src_pixel_h < 2 {
+                    continue;
+                }
+                
                 blit_tile_region(
                     &mut buffer,
                     render_width,
