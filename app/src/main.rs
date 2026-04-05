@@ -19,10 +19,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, trace, warn};
 
+// Debug macro - set to no-op for release, enable for debugging
+#[allow(unused_macros)]
 macro_rules! dbg_print {
     ($($arg:tt)*) => {{
-        eprintln!($($arg)*);
-        let _ = std::io::stderr().flush();
+        // Uncomment for verbose debugging:
+        // eprintln!($($arg)*);
+        // let _ = std::io::stderr().flush();
     }};
 }
 
@@ -881,8 +884,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     trace!("render: visible_tiles count={}", visible_tiles.len());
     
-    // Limit visible tiles to prevent overwhelming
-    let visible_tiles: Vec<_> = visible_tiles.into_iter().take(50).collect();
+    // Limit visible tiles to a reasonable maximum (typical viewport needs ~200-500 tiles when zoomed in)
+    let visible_tiles: Vec<_> = visible_tiles.into_iter().take(500).collect();
     
     // Count how many tiles are in cache
     let cached_count = visible_tiles.iter().filter(|c| tile_cache.contains(c)).count() as u32;
@@ -968,12 +971,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     };
     dbg_print!("[RENDER] got level_info: downsample={}", level_info.downsample);
     
-    // TEMPORARILY DISABLED: First pass (fallback tiles) - skip for debugging
-    // TODO: Re-enable once basic rendering works
-    /*
-    trace!("render: starting first pass (fallback tiles)");
-    
     // First pass: render fallback tiles for any missing high-res tiles
+    // This shows lower-res data while high-res tiles are loading
     let mut fallbacks_rendered = 0;
     for coord in &visible_tiles {
         if tile_cache.contains(coord) {
@@ -985,8 +984,6 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             // Validate tile data
             let expected_size = (fallback_tile.width * fallback_tile.height * 4) as usize;
             if fallback_tile.data.len() != expected_size {
-                warn!("Fallback tile {:?} has invalid data size: {} vs expected {}", 
-                    fallback_tile.coord, fallback_tile.data.len(), expected_size);
                 continue;
             }
             
@@ -1006,11 +1003,9 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             }
             
             if let Some(region) = calculate_fallback_region(&file.wsi, *coord, fallback_level) {
-                // Validate region
+                // Validate region bounds
                 if region.src_x < 0.0 || region.src_y < 0.0 || 
                    region.src_x + region.src_w > 1.0 || region.src_y + region.src_h > 1.0 {
-                    warn!("Invalid fallback region: ({},{}) + ({},{})", 
-                        region.src_x, region.src_y, region.src_w, region.src_h);
                     continue;
                 }
                 
@@ -1035,9 +1030,7 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         }
     }
     
-    trace!("render: first pass done, rendered {} fallbacks", fallbacks_rendered);
-    */
-    // END DISABLED FALLBACK CODE
+    dbg_print!("[RENDER] first pass: rendered {} fallbacks", fallbacks_rendered);
     
     dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", visible_tiles.len());
     
@@ -1113,8 +1106,8 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         bounds.bottom,
     );
     
-    // Limit visible tiles to prevent freezing
-    let visible_tiles: Vec<_> = visible_tiles.into_iter().take(50).collect();
+    // Limit visible tiles to a reasonable maximum
+    let visible_tiles: Vec<_> = visible_tiles.into_iter().take(500).collect();
     
     // Update wanted tiles for background loading (secondary viewport)
     let wanted = calculate_wanted_tiles(
@@ -1147,8 +1140,6 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         None => return,
     };
     
-    // TEMPORARILY DISABLED: First pass (fallback tiles) - skip for debugging
-    /*
     // First pass: render fallback tiles for missing high-res tiles
     for coord in &visible_tiles {
         if tile_cache.contains(coord) {
@@ -1166,7 +1157,15 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             let screen_w = screen_x_end - screen_x;
             let screen_h = screen_y_end - screen_y;
             
+            if screen_w <= 0 || screen_h <= 0 {
+                continue;
+            }
+            
             if let Some(region) = calculate_fallback_region(&file.wsi, *coord, fallback_level) {
+                if region.src_x < 0.0 || region.src_y < 0.0 || 
+                   region.src_x + region.src_w > 1.0 || region.src_y + region.src_h > 1.0 {
+                    continue;
+                }
                 blit_tile_region(
                     &mut buffer,
                     render_width,
@@ -1186,7 +1185,6 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             }
         }
     }
-    */
     
     // Second pass: render high-res tiles that are available
     for coord in &visible_tiles {

@@ -244,8 +244,26 @@ pub fn calculate_wanted_tiles(
     bounds_bottom: f64,
 ) -> Vec<TileCoord> {
     let mut wanted = Vec::new();
+    let level_count = tile_manager.wsi().level_count();
     
-    // Get visible tiles at current level (limited to prevent overwhelming the loader)
+    // First, add lower-resolution tiles (higher level indices = lower resolution)
+    // These load faster and provide immediate visual feedback while high-res tiles load
+    // Start from lowest resolution (level_count-1) and work toward current level
+    for fallback_level in ((level + 1)..level_count).rev() {
+        let fallback_tiles = tile_manager.visible_tiles(
+            fallback_level,
+            bounds_left,
+            bounds_top,
+            bounds_right,
+            bounds_bottom,
+        );
+        
+        // Low-res levels have fewer tiles, so load more of them
+        let tiles_at_this_level = fallback_tiles.len().min(50);
+        wanted.extend(fallback_tiles.iter().take(tiles_at_this_level).copied());
+    }
+    
+    // Then add current level tiles (these are the final high-res display)
     let visible = tile_manager.visible_tiles(
         level,
         bounds_left,
@@ -253,20 +271,7 @@ pub fn calculate_wanted_tiles(
         bounds_right,
         bounds_bottom,
     );
-    wanted.extend(visible.iter().take(100).copied());
-    
-    // Also want the lowest-resolution level as fallback
-    let lowest_level = tile_manager.wsi().level_count().saturating_sub(1);
-    if lowest_level != level {
-        let low_res = tile_manager.visible_tiles(
-            lowest_level,
-            bounds_left,
-            bounds_top,
-            bounds_right,
-            bounds_bottom,
-        );
-        wanted.extend(low_res.iter().take(100).copied());
-    }
+    wanted.extend(visible.iter().take(500).copied());
     
     wanted
 }
