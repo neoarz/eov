@@ -831,16 +831,24 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             }
         };
         
-        // Calculate tile position on screen
+        // Calculate tile position in image coordinates
         let tile_x = coord.x as f64 * tile_size as f64;
         let tile_y = coord.y as f64 * tile_size as f64;
         
-        // Convert to screen coordinates
+        // Calculate screen coordinates for this tile's edges
+        // We calculate both the left edge and right edge to determine the exact pixel width
+        // This prevents gaps between adjacent tiles due to floating-point rounding
         let bounds = vp.bounds();
-        let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom) as i32;
-        let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom) as i32;
-        let screen_w = (tile_data.width as f64 * level_info.downsample * vp.zoom) as i32;
-        let screen_h = (tile_data.height as f64 * level_info.downsample * vp.zoom) as i32;
+        let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
+        let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
+        
+        // Calculate the position where the next tile would start to get exact width
+        let screen_x_end = (((tile_x + tile_data.width as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
+        let screen_y_end = (((tile_y + tile_data.height as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
+        
+        // Use the difference to get seamless tile widths
+        let screen_w = screen_x_end - screen_x;
+        let screen_h = screen_y_end - screen_y;
         
         // Blit tile to buffer (simple nearest-neighbor scaling)
         blit_tile(
@@ -920,15 +928,23 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             }
         };
         
-        // Calculate tile position on screen
+        // Calculate tile position in image coordinates
         let tile_x = coord.x as f64 * tile_size as f64;
         let tile_y = coord.y as f64 * tile_size as f64;
         
-        // Convert to screen coordinates
-        let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom) as i32;
-        let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom) as i32;
-        let screen_w = (tile_data.width as f64 * level_info.downsample * vp.zoom) as i32;
-        let screen_h = (tile_data.height as f64 * level_info.downsample * vp.zoom) as i32;
+        // Calculate screen coordinates for this tile's edges
+        // We calculate both the left edge and right edge to determine the exact pixel width
+        // This prevents gaps between adjacent tiles due to floating-point rounding
+        let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
+        let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
+        
+        // Calculate the position where the next tile would start to get exact width
+        let screen_x_end = (((tile_x + tile_data.width as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
+        let screen_y_end = (((tile_y + tile_data.height as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
+        
+        // Use the difference to get seamless tile widths
+        let screen_w = screen_x_end - screen_x;
+        let screen_h = screen_y_end - screen_y;
         
         // Blit tile to buffer
         blit_tile(
