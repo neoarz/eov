@@ -543,9 +543,11 @@ fn open_file(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: &Arc<Til
             let id = {
                 let mut state_guard = state.write();
                 
-                // Get viewport size from UI
-                let viewport_width = 1024.0; // Default, will be updated on first render
-                let viewport_height = 768.0;
+                // Get viewport size from UI (use reasonable defaults if not yet laid out)
+                let ui_width = ui.get_viewport_width() as f64;
+                let ui_height = ui.get_viewport_height() as f64;
+                let viewport_width = if ui_width > 0.0 { ui_width } else { 1024.0 };
+                let viewport_height = if ui_height > 0.0 { ui_height } else { 768.0 };
                 
                 let props = wsi.properties();
                 let viewport = ViewportState::new(
@@ -560,6 +562,20 @@ fn open_file(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: &Arc<Til
                 
                 // Create background tile loader (tiles are loaded on-demand)
                 let tile_loader = TileLoader::new(Arc::clone(&tile_manager), Arc::clone(tile_cache));
+                
+                // Start loading tiles immediately using the initial viewport bounds
+                // This ensures tiles begin loading before the first render
+                let bounds = viewport.viewport.bounds();
+                let best_level = wsi.best_level_for_downsample(viewport.viewport.effective_downsample());
+                let initial_tiles = calculate_wanted_tiles(
+                    &tile_manager,
+                    best_level,
+                    bounds.left,
+                    bounds.top,
+                    bounds.right,
+                    bounds.bottom,
+                );
+                tile_loader.set_wanted_tiles(initial_tiles);
                 
                 // Generate small thumbnail for minimap (lazy - only reads what's needed)
                 let thumbnail = generate_thumbnail(&wsi, 150);
@@ -875,7 +891,14 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     let level = file.wsi.best_level_for_downsample(vp.effective_downsample());
     let tile_size = file.tile_manager.tile_size();
     
-    trace!("render: level={} tile_size={}", level, tile_size);
+    // Check if level changed - must reset tile tracking and force re-render
+    let level_changed = level != file.last_render_level;
+    if level_changed {
+        // Reset tile count since we're now tracking a different set of tiles
+        file.tiles_loaded_since_render = 0;
+    }
+    
+    trace!("render: level={} tile_size={} level_changed={}", level, tile_size, level_changed);
     
     // Get visible tiles using viewport bounds
     let bounds = vp.bounds();
@@ -894,8 +917,13 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     // Limit visible tiles to a reasonable maximum (typical viewport needs ~200-500 tiles when zoomed in)
     let visible_tiles: Vec<_> = visible_tiles.into_iter().take(500).collect();
     
-    // Count how many tiles are in cache
-    let cached_count = visible_tiles.iter().filter(|c| tile_cache.contains(c)).count() as u32;
+    // Pre-fetch all visible tiles from cache NOW to avoid race conditions
+    // Holding Arc references prevents eviction during render
+    let cached_tiles: Vec<_> = visible_tiles
+        .iter()
+        .filter_map(|coord| tile_cache.get(coord).map(|data| (*coord, data)))
+        .collect();
+    let cached_count = cached_tiles.len() as u32;
     let new_tiles_loaded = cached_count > file.tiles_loaded_since_render;
     
     trace!("render: cached={} new_tiles={}", cached_count, new_tiles_loaded);
@@ -916,29 +944,14 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     trace!("render: set_wanted_tiles done");
     
-    // Throttle tile-only update renders to max 4x per second (250ms between renders)
-    // But ALWAYS render immediately when new tiles become available for the first time
-    let time_since_render = file.last_render_time.elapsed();
-    let throttle_ok = time_since_render.as_millis() >= 250;
-    
     // Skip rendering if nothing changed
     // - Always render first frame
     // - Always render if viewport changed (pan/zoom)
-    // - Always render if new tiles loaded (even if throttled, for responsiveness)
-    // - Throttle only affects continuous renders with no changes
-    if !is_first_frame && !viewport_changed && !new_tiles_loaded {
+    // - Always render if level changed (different tiles needed)
+    // - Always render if new tiles loaded at current level
+    if !is_first_frame && !viewport_changed && !level_changed && !new_tiles_loaded {
         trace!("render: skipping (no changes)");
         return;
-    }
-    
-    // Additional throttle: if viewport unchanged and tiles still loading, limit to 4fps
-    // This prevents excessive re-renders during initial tile population
-    if !viewport_changed && new_tiles_loaded && !throttle_ok && !is_first_frame {
-        // But still render if this is the first tile update after opening
-        if file.tiles_loaded_since_render > 0 {
-            trace!("render: throttling tile updates");
-            return;
-        }
     }
     
     dbg_print!("[RENDER] proceeding with render");
@@ -953,6 +966,7 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     dbg_print!("[RENDER] tracking state updated");
     file.last_render_width = vp_width;
     file.last_render_height = vp_height;
+    file.last_render_level = level;
     file.tiles_loaded_since_render = cached_count;
     
     // Use persistent buffer for rendering
@@ -1064,17 +1078,13 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     dbg_print!("[RENDER] first pass: rendered {} fallbacks", _fallbacks_rendered);
     
-    dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", visible_tiles.len());
+    dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", cached_tiles.len());
     
     // Second pass: render high-res tiles that are available (these overdraw fallbacks)
+    // Use pre-fetched tiles to avoid race conditions with cache eviction
     let mut _tiles_blitted = 0;
-    for (_i, coord) in visible_tiles.iter().enumerate() {
-        dbg_print!("[RENDER] tile {} of {}: {:?}", _i, visible_tiles.len(), coord);
-        let Some(tile_data) = tile_cache.get(coord) else {
-            dbg_print!("[RENDER] tile {:?} not in cache, skip", coord);
-            continue;
-        };
-        dbg_print!("[RENDER] tile {:?} in cache, blitting", coord);
+    for (_i, (coord, tile_data)) in cached_tiles.iter().enumerate() {
+        dbg_print!("[RENDER] tile {} of {}: {:?}", _i, cached_tiles.len(), coord);
         
         let tile_x = coord.x as f64 * tile_size as f64;
         let tile_y = coord.y as f64 * tile_size as f64;

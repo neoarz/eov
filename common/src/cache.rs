@@ -13,11 +13,11 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-/// Default maximum cache size in bytes (64MB)
-pub const DEFAULT_CACHE_SIZE_BYTES: usize = 64 * 1024 * 1024;
+/// Default maximum cache size in bytes (256MB)
+pub const DEFAULT_CACHE_SIZE_BYTES: usize = 256 * 1024 * 1024;
 
 /// Default maximum number of tiles to cache
-pub const DEFAULT_MAX_TILES: usize = 256;
+pub const DEFAULT_MAX_TILES: usize = 2048;
 
 /// Cache entry with metadata
 #[derive(Clone)]

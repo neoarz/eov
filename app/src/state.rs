@@ -111,7 +111,9 @@ pub struct OpenFile {
     pub last_render_center_y: f64,
     pub last_render_width: f64,
     pub last_render_height: f64,
-    /// Number of tiles loaded since last render
+    /// Last rendered pyramid level (for detecting level changes)
+    pub last_render_level: u32,
+    /// Number of tiles loaded since last render (at current level)
     pub tiles_loaded_since_render: u32,
     /// Frame counter for dirty tracking (0 means never rendered)
     pub frame_count: u32,
@@ -232,6 +234,7 @@ impl AppState {
             last_render_center_y: 0.0,
             last_render_width: 0.0,
             last_render_height: 0.0,
+            last_render_level: u32::MAX,
             tiles_loaded_since_render: 0,
             frame_count: 0,
             last_render_time: std::time::Instant::now(),

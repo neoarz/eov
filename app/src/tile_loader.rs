@@ -13,10 +13,10 @@ use std::thread;
 use tracing::trace;
 
 /// Number of background worker threads for tile loading
-const WORKER_COUNT: usize = 2;
+const WORKER_COUNT: usize = 4;
 
 /// Maximum tiles to send to workers per frame
-const MAX_TILES_PER_FRAME: usize = 16;
+const MAX_TILES_PER_FRAME: usize = 32;
 
 /// Background tile loader with automatic cancellation of stale requests
 pub struct TileLoader {
@@ -37,8 +37,8 @@ pub struct TileLoader {
 impl TileLoader {
     /// Create a new tile loader
     pub fn new(tile_manager: Arc<TileManager>, cache: Arc<TileCache>) -> Self {
-        // Bounded channel for tile requests - sized for good throughput without excessive memory
-        let (request_tx, request_rx) = bounded::<TileCoord>(32);
+        // Bounded channel for tile requests - sized for good throughput
+        let (request_tx, request_rx) = bounded::<TileCoord>(64);
         let failed = Arc::new(Mutex::new(HashSet::new()));
         let generation = Arc::new(AtomicU64::new(0));
         let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -259,9 +259,19 @@ pub fn calculate_wanted_tiles(
     let mut wanted = Vec::new();
     let level_count = tile_manager.wsi().level_count();
     
-    // First, add lower-resolution tiles for fallback display
-    // Prioritize levels CLOSEST to current level (one level up is best fallback quality)
-    // These tiles have enough pixels to display properly even when zoomed in
+    // FIRST: Add current level tiles - these are the primary display tiles
+    // Prioritize these over fallbacks so user sees sharp content ASAP
+    let visible = tile_manager.visible_tiles(
+        level,
+        bounds_left,
+        bounds_top,
+        bounds_right,
+        bounds_bottom,
+    );
+    wanted.extend(visible.iter().take(500).copied());
+    
+    // THEN: Add lower-resolution tiles for fallback display (while high-res loads)
+    // These provide quick visual feedback but are lower priority
     for fallback_level in (level + 1)..level_count {
         let fallback_tiles = tile_manager.visible_tiles(
             fallback_level,
@@ -277,16 +287,6 @@ pub fn calculate_wanted_tiles(
         let tiles_at_this_level = (fallback_tiles.len().min(20) + priority_boost as usize * 10).min(50);
         wanted.extend(fallback_tiles.iter().take(tiles_at_this_level).copied());
     }
-    
-    // Then add current level tiles (these are the final high-res display)
-    let visible = tile_manager.visible_tiles(
-        level,
-        bounds_left,
-        bounds_top,
-        bounds_right,
-        bounds_bottom,
-    );
-    wanted.extend(visible.iter().take(500).copied());
     
     wanted
 }
