@@ -887,8 +887,9 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         (file.last_render_width - vp_width).abs() > 0.1 ||
         (file.last_render_height - vp_height).abs() > 0.1;
     
-    // Determine best level for current zoom
-    let level = file.wsi.best_level_for_downsample(vp.effective_downsample());
+    // Calculate trilinear levels for smooth mip transitions
+    let trilinear = render::calculate_trilinear_levels(&file.wsi, vp.effective_downsample());
+    let level = trilinear.level_fine; // Primary level for rendering
     let tile_size = file.tile_manager.tile_size();
     
     // Check if level changed - must reset tile tracking and force re-render
@@ -898,7 +899,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         file.tiles_loaded_since_render = 0;
     }
     
-    trace!("render: level={} tile_size={} level_changed={}", level, tile_size, level_changed);
+    trace!("render: trilinear levels fine={} coarse={} blend={:.3}", 
+           trilinear.level_fine, trilinear.level_coarse, trilinear.blend);
     
     // Get visible tiles using viewport bounds
     let bounds = vp.bounds();
@@ -924,12 +926,33 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         .filter_map(|coord| tile_cache.get(coord).map(|data| (*coord, data)))
         .collect();
     let cached_count = cached_tiles.len() as u32;
-    let new_tiles_loaded = cached_count > file.tiles_loaded_since_render;
     
-    trace!("render: cached={} new_tiles={}", cached_count, new_tiles_loaded);
+    // For trilinear, also fetch coarse level tiles
+    let coarse_visible_tiles = if trilinear.level_fine != trilinear.level_coarse && trilinear.blend > 0.01 {
+        file.tile_manager.visible_tiles(
+            trilinear.level_coarse,
+            bounds.left,
+            bounds.top,
+            bounds.right,
+            bounds.bottom,
+        )
+    } else {
+        Vec::new()
+    };
+    
+    let cached_coarse_tiles: Vec<_> = coarse_visible_tiles
+        .iter()
+        .filter_map(|coord| tile_cache.get(coord).map(|data| (*coord, data)))
+        .collect();
+    
+    let new_tiles_loaded = cached_count > file.tiles_loaded_since_render || 
+                           !cached_coarse_tiles.is_empty();
+    
+    trace!("render: cached fine={} coarse={} new_tiles={}", cached_count, cached_coarse_tiles.len(), new_tiles_loaded);
     
     // Update wanted tiles for background loading (always do this)
-    let wanted = calculate_wanted_tiles(
+    // Include both fine and coarse levels for trilinear
+    let mut wanted = calculate_wanted_tiles(
         &file.tile_manager,
         level,
         bounds.left,
@@ -937,6 +960,19 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         bounds.right,
         bounds.bottom,
     );
+    
+    // Add coarse level tiles to wanted list for trilinear blending
+    if trilinear.level_fine != trilinear.level_coarse && trilinear.blend > 0.01 {
+        let coarse_wanted = calculate_wanted_tiles(
+            &file.tile_manager,
+            trilinear.level_coarse,
+            bounds.left,
+            bounds.top,
+            bounds.right,
+            bounds.bottom,
+        );
+        wanted.extend(coarse_wanted);
+    }
     
     trace!("render: wanted tiles={}", wanted.len());
     
@@ -1039,21 +1075,19 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
                 continue;
             };
             
-            // Calculate screen position for this fallback tile
-            // Each fallback tile covers (tile_size * fallback_downsample) pixels in image space
-            let fb_tile_x = fb_coord.x as f64 * tile_size as f64;
-            let fb_tile_y = fb_coord.y as f64 * tile_size as f64;
+            // Calculate image coordinates for this fallback tile
+            let fb_image_x = fb_coord.x as f64 * tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_y = fb_coord.y as f64 * tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_x_end = fb_image_x + fallback_tile.width as f64 * fallback_level_info.downsample;
+            let fb_image_y_end = fb_image_y + fallback_tile.height as f64 * fallback_level_info.downsample;
             
-            // Convert to image coordinates (level 0) and then to screen
-            let fb_image_x = fb_tile_x * fallback_level_info.downsample;
-            let fb_image_y = fb_tile_y * fallback_level_info.downsample;
-            let fb_image_w = fallback_tile.width as f64 * fallback_level_info.downsample;
-            let fb_image_h = fallback_tile.height as f64 * fallback_level_info.downsample;
-            
+            // Convert to screen coordinates using floor/ceil for proper pixel coverage
             let screen_x = ((fb_image_x - bounds.left) * vp.zoom).floor() as i32;
             let screen_y = ((fb_image_y - bounds.top) * vp.zoom).floor() as i32;
-            let screen_w = (fb_image_w * vp.zoom).ceil() as i32;
-            let screen_h = (fb_image_h * vp.zoom).ceil() as i32;
+            let screen_x_end = ((fb_image_x_end - bounds.left) * vp.zoom).ceil() as i32;
+            let screen_y_end = ((fb_image_y_end - bounds.top) * vp.zoom).ceil() as i32;
+            let screen_w = screen_x_end - screen_x;
+            let screen_h = screen_y_end - screen_y;
             
             if screen_w <= 0 || screen_h <= 0 {
                 continue;
@@ -1080,24 +1114,108 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", cached_tiles.len());
     
-    // Second pass: render high-res tiles that are available (these overdraw fallbacks)
+    // Disable trilinear for now - just use bilinear
+    let do_trilinear = false;
+    let _coarse_level_info = file.wsi.level(trilinear.level_coarse);
+    // let do_trilinear = trilinear.blend > 0.01 && trilinear.level_fine != trilinear.level_coarse 
+    //                    && coarse_level_info.is_some() && !cached_coarse_tiles.is_empty();
+    
+    dbg_print!("[RENDER] trilinear: blend={:.3} do_trilinear={}", trilinear.blend, do_trilinear);
+    
+    // Second pass: render high-res tiles with optional trilinear blending
     // Use pre-fetched tiles to avoid race conditions with cache eviction
     let mut _tiles_blitted = 0;
     for (_i, (coord, tile_data)) in cached_tiles.iter().enumerate() {
         dbg_print!("[RENDER] tile {} of {}: {:?}", _i, cached_tiles.len(), coord);
         
-        let tile_x = coord.x as f64 * tile_size as f64;
-        let tile_y = coord.y as f64 * tile_size as f64;
+        // Calculate screen position based on image coordinates
+        // Each tile at (coord.x, coord.y) covers [coord.x * tile_size * ds, (coord.x+1) * tile_size * ds) in image space
+        let image_x = coord.x as f64 * tile_size as f64 * level_info.downsample;
+        let image_y = coord.y as f64 * tile_size as f64 * level_info.downsample;
+        let image_x_end = image_x + tile_data.width as f64 * level_info.downsample;
+        let image_y_end = image_y + tile_data.height as f64 * level_info.downsample;
         
-        let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
-        let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
-        let screen_x_end = (((tile_x + tile_data.width as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
-        let screen_y_end = (((tile_y + tile_data.height as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
+        // Convert to screen coordinates using floor/ceil for proper pixel coverage
+        let screen_x = ((image_x - bounds.left) * vp.zoom).floor() as i32;
+        let screen_y = ((image_y - bounds.top) * vp.zoom).floor() as i32;
+        let screen_x_end = ((image_x_end - bounds.left) * vp.zoom).ceil() as i32;
+        let screen_y_end = ((image_y_end - bounds.top) * vp.zoom).ceil() as i32;
+        
         let screen_w = screen_x_end - screen_x;
         let screen_h = screen_y_end - screen_y;
         
         dbg_print!("[RENDER] blit tile {:?}: screen=({},{}) size={}x{}", coord, screen_x, screen_y, screen_w, screen_h);
         
+        // Trilinear is disabled for now - just use bilinear
+        // Try trilinear blending if enabled
+        if do_trilinear {
+            let coarse_info = _coarse_level_info.unwrap();
+            
+            // Find the fine tile's position in image coordinates (level 0)
+            let fine_image_w = tile_data.width as f64 * level_info.downsample;
+            let fine_image_h = tile_data.height as f64 * level_info.downsample;
+            
+            // Convert to coarse level coordinates
+            let coarse_tile_x = image_x / coarse_info.downsample;
+            let coarse_tile_y = image_y / coarse_info.downsample;
+            
+            // Find which coarse tile contains this region
+            let coarse_tile_idx_x = (coarse_tile_x / tile_size as f64).floor() as u64;
+            let coarse_tile_idx_y = (coarse_tile_y / tile_size as f64).floor() as u64;
+            
+            // Look for the coarse tile in our cached tiles
+            let coarse_tile = cached_coarse_tiles.iter()
+                .find(|(c, _)| c.level == trilinear.level_coarse && 
+                              c.x == coarse_tile_idx_x && 
+                              c.y == coarse_tile_idx_y);
+            
+            if let Some((coarse_coord, coarse_data)) = coarse_tile {
+                // Calculate where within the coarse tile our fine region maps to
+                let coarse_tile_origin_x = coarse_coord.x as f64 * tile_size as f64;
+                let coarse_tile_origin_y = coarse_coord.y as f64 * tile_size as f64;
+                
+                // Source region within coarse tile
+                let coarse_src_x = coarse_tile_x - coarse_tile_origin_x;
+                let coarse_src_y = coarse_tile_y - coarse_tile_origin_y;
+                let coarse_src_w = fine_image_w / coarse_info.downsample;
+                let coarse_src_h = fine_image_h / coarse_info.downsample;
+                
+                // Clamp source region to actual coarse tile bounds to prevent stretched edge artifacts
+                let coarse_src_x_clamped = coarse_src_x.max(0.0);
+                let coarse_src_y_clamped = coarse_src_y.max(0.0);
+                let coarse_src_w_clamped = (coarse_src_w).min(coarse_data.width as f64 - coarse_src_x_clamped);
+                let coarse_src_h_clamped = (coarse_src_h).min(coarse_data.height as f64 - coarse_src_y_clamped);
+                
+                // Only do trilinear if we have a valid coarse region
+                if coarse_src_w_clamped > 0.0 && coarse_src_h_clamped > 0.0 {
+                    blit_tile_trilinear(
+                        buffer,
+                        render_width,
+                        render_height,
+                        &tile_data.data,
+                        tile_data.width,
+                        tile_data.height,
+                        &coarse_data.data,
+                        coarse_data.width,
+                        coarse_data.height,
+                        screen_x,
+                        screen_y,
+                        screen_w,
+                        screen_h,
+                        coarse_src_x_clamped,
+                        coarse_src_y_clamped,
+                        coarse_src_w_clamped,
+                        coarse_src_h_clamped,
+                        trilinear.blend,
+                    );
+                    _tiles_blitted += 1;
+                    dbg_print!("[RENDER] trilinear blit done");
+                    continue;
+                }
+            }
+        }
+        
+        // Fallback to standard bilinear blit
         blit_tile(
             buffer,
             render_width,
@@ -1210,20 +1328,19 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
                 continue;
             };
             
-            // Calculate screen position for this fallback tile
-            let fb_tile_x = fb_coord.x as f64 * tile_size as f64;
-            let fb_tile_y = fb_coord.y as f64 * tile_size as f64;
+            // Calculate image coordinates for this fallback tile
+            let fb_image_x = fb_coord.x as f64 * tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_y = fb_coord.y as f64 * tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_x_end = fb_image_x + fallback_tile.width as f64 * fallback_level_info.downsample;
+            let fb_image_y_end = fb_image_y + fallback_tile.height as f64 * fallback_level_info.downsample;
             
-            // Convert to image coordinates (level 0) and then to screen
-            let fb_image_x = fb_tile_x * fallback_level_info.downsample;
-            let fb_image_y = fb_tile_y * fallback_level_info.downsample;
-            let fb_image_w = fallback_tile.width as f64 * fallback_level_info.downsample;
-            let fb_image_h = fallback_tile.height as f64 * fallback_level_info.downsample;
-            
+            // Convert to screen coordinates
             let screen_x = ((fb_image_x - bounds.left) * vp.zoom).floor() as i32;
             let screen_y = ((fb_image_y - bounds.top) * vp.zoom).floor() as i32;
-            let screen_w = (fb_image_w * vp.zoom).ceil() as i32;
-            let screen_h = (fb_image_h * vp.zoom).ceil() as i32;
+            let screen_x_end = ((fb_image_x_end - bounds.left) * vp.zoom).ceil() as i32;
+            let screen_y_end = ((fb_image_y_end - bounds.top) * vp.zoom).ceil() as i32;
+            let screen_w = screen_x_end - screen_x;
+            let screen_h = screen_y_end - screen_y;
             
             if screen_w <= 0 || screen_h <= 0 {
                 continue;
@@ -1250,13 +1367,17 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             continue;
         };
         
-        let tile_x = coord.x as f64 * tile_size as f64;
-        let tile_y = coord.y as f64 * tile_size as f64;
+        // Calculate image coordinates for this tile
+        let image_x = coord.x as f64 * tile_size as f64 * level_info.downsample;
+        let image_y = coord.y as f64 * tile_size as f64 * level_info.downsample;
+        let image_x_end = image_x + tile_data.width as f64 * level_info.downsample;
+        let image_y_end = image_y + tile_data.height as f64 * level_info.downsample;
         
-        let screen_x = ((tile_x * level_info.downsample - bounds.left) * vp.zoom).floor() as i32;
-        let screen_y = ((tile_y * level_info.downsample - bounds.top) * vp.zoom).floor() as i32;
-        let screen_x_end = (((tile_x + tile_data.width as f64) * level_info.downsample - bounds.left) * vp.zoom).ceil() as i32;
-        let screen_y_end = (((tile_y + tile_data.height as f64) * level_info.downsample - bounds.top) * vp.zoom).ceil() as i32;
+        // Convert to screen coordinates
+        let screen_x = ((image_x - bounds.left) * vp.zoom).floor() as i32;
+        let screen_y = ((image_y - bounds.top) * vp.zoom).floor() as i32;
+        let screen_x_end = ((image_x_end - bounds.left) * vp.zoom).ceil() as i32;
+        let screen_y_end = ((image_y_end - bounds.top) * vp.zoom).ceil() as i32;
         let screen_w = screen_x_end - screen_x;
         let screen_h = screen_y_end - screen_y;
         
@@ -1310,12 +1431,14 @@ fn blit_tile(
     let end_x = (dest_x + scaled_width).min(dest_width as i32) as u32;
     let end_y = (dest_y + scaled_height).min(dest_height as i32) as u32;
     
-    // Use 16.16 fixed-point for sub-pixel precision (much faster than f64)
-    let scale_x_fp = ((src_width as u64) << 16) / scaled_width as u64;
-    let scale_y_fp = ((src_height as u64) << 16) / scaled_height as u64;
+    // Use standard texture mapping: src_width / scaled_width ratio
+    // This ensures each source pixel covers exactly (scaled_width / src_width) dest pixels
+    // avoiding edge stretching at tile boundaries
+    let scale_x_fp = ((src_width as u64) << 16) / (scaled_width as u64).max(1);
+    let scale_y_fp = ((src_height as u64) << 16) / (scaled_height as u64).max(1);
     
-    let src_width_minus_1 = (src_width - 1) as u32;
-    let src_height_minus_1 = (src_height - 1) as u32;
+    let src_width_minus_1 = (src_width.saturating_sub(1)) as u32;
+    let src_height_minus_1 = (src_height.saturating_sub(1)) as u32;
     let dest_stride = dest_width * 4;
     let src_stride = src_width * 4;
     
@@ -1379,6 +1502,192 @@ fn blit_tile(
                     src[idx01 + 3] as u32 * w01 +
                     src[idx11 + 3] as u32 * w11
                 ) >> 16) as u8;
+            }
+        }
+    }
+}
+
+/// Trilinear blit: blends between two mip levels for smooth level transitions.
+/// This performs bilinear sampling on both levels and blends the results.
+///
+/// # Arguments
+/// * `dest` - Destination buffer (RGBA)
+/// * `dest_width`, `dest_height` - Destination dimensions
+/// * `src_fine` - Source buffer from higher resolution (lower level index) tile
+/// * `src_fine_width`, `src_fine_height` - Fine source dimensions
+/// * `src_coarse` - Source buffer from lower resolution (higher level index) tile  
+/// * `src_coarse_width`, `src_coarse_height` - Coarse source dimensions
+/// * `dest_x`, `dest_y` - Destination position for fine tile
+/// * `fine_scaled_width`, `fine_scaled_height` - Scaled size for fine tile
+/// * `coarse_offset_x`, `coarse_offset_y` - Offset within coarse tile for this region
+/// * `blend` - Blend factor: 0.0 = use fine, 1.0 = use coarse
+fn blit_tile_trilinear(
+    dest: &mut [u8],
+    dest_width: u32,
+    dest_height: u32,
+    src_fine: &[u8],
+    src_fine_width: u32,
+    src_fine_height: u32,
+    src_coarse: &[u8],
+    src_coarse_width: u32,
+    src_coarse_height: u32,
+    dest_x: i32,
+    dest_y: i32,
+    fine_scaled_width: i32,
+    fine_scaled_height: i32,
+    coarse_src_x: f64,
+    coarse_src_y: f64,
+    coarse_src_w: f64,
+    coarse_src_h: f64,
+    blend: f64,
+) {
+    if fine_scaled_width <= 0 || fine_scaled_height <= 0 {
+        return;
+    }
+    
+    // Early return if tile is entirely off-screen
+    if dest_x + fine_scaled_width <= 0 || dest_y + fine_scaled_height <= 0 {
+        return;
+    }
+    if dest_x >= dest_width as i32 || dest_y >= dest_height as i32 {
+        return;
+    }
+    
+    // Calculate visible region (clamp to destination bounds)
+    let start_x = dest_x.max(0) as u32;
+    let start_y = dest_y.max(0) as u32;
+    let end_x = (dest_x + fine_scaled_width).min(dest_width as i32) as u32;
+    let end_y = (dest_y + fine_scaled_height).min(dest_height as i32) as u32;
+    
+    // Fixed-point scale factors for fine level
+    // Map destination [0, scaled_width-1] to source [0, src_width-1] for proper edge sampling
+    let denom_x = (fine_scaled_width - 1).max(1) as u64;
+    let denom_y = (fine_scaled_height - 1).max(1) as u64;
+    let scale_x_fine_fp = (((src_fine_width - 1).max(1) as u64) << 16) / denom_x;
+    let scale_y_fine_fp = (((src_fine_height - 1).max(1) as u64) << 16) / denom_y;
+    
+    // Scale factors to map from destination pixel to coarse source pixel
+    let scale_x_coarse = coarse_src_w / (fine_scaled_width as f64).max(1.0);
+    let scale_y_coarse = coarse_src_h / (fine_scaled_height as f64).max(1.0);
+    
+    let src_fine_width_minus_1 = (src_fine_width - 1) as u32;
+    let src_fine_height_minus_1 = (src_fine_height - 1) as u32;
+    let src_coarse_width_minus_1 = (src_coarse_width - 1) as u32;
+    let src_coarse_height_minus_1 = (src_coarse_height - 1) as u32;
+    
+    let dest_stride = dest_width * 4;
+    let src_fine_stride = src_fine_width * 4;
+    let src_coarse_stride = src_coarse_width * 4;
+    
+    // Convert blend to fixed-point (256 scale)
+    let blend_coarse = (blend * 256.0).clamp(0.0, 256.0) as u32;
+    let blend_fine = 256 - blend_coarse;
+    
+    for y in start_y..end_y {
+        let local_y = (y as i32 - dest_y) as f64;
+        
+        // Fine level sampling coords
+        let src_y_fine_fp = (local_y as u64 * scale_y_fine_fp as u64) as u32;
+        let y0_fine = (src_y_fine_fp >> 16).min(src_fine_height_minus_1);
+        let y1_fine = (y0_fine + 1).min(src_fine_height_minus_1);
+        let fy_fine = ((src_y_fine_fp & 0xFFFF) >> 8) as u32;
+        let inv_fy_fine = 256 - fy_fine;
+        
+        // Coarse level sampling coords (clamp to valid range)
+        let coarse_y = (coarse_src_y + local_y * scale_y_coarse).max(0.0);
+        let y0_coarse = (coarse_y.floor() as u32).min(src_coarse_height_minus_1);
+        let y1_coarse = (y0_coarse + 1).min(src_coarse_height_minus_1);
+        let fy_coarse = (((coarse_y - coarse_y.floor()) * 256.0) as u32).min(255);
+        let inv_fy_coarse = 256 - fy_coarse;
+        
+        let dest_row = (y * dest_stride) as usize;
+        let src_fine_row0 = (y0_fine * src_fine_stride) as usize;
+        let src_fine_row1 = (y1_fine * src_fine_stride) as usize;
+        let src_coarse_row0 = (y0_coarse * src_coarse_stride) as usize;
+        let src_coarse_row1 = (y1_coarse * src_coarse_stride) as usize;
+        
+        for x in start_x..end_x {
+            let local_x = (x as i32 - dest_x) as f64;
+            
+            // Fine level X coords
+            let src_x_fine_fp = (local_x as u64 * scale_x_fine_fp as u64) as u32;
+            let x0_fine = (src_x_fine_fp >> 16).min(src_fine_width_minus_1);
+            let x1_fine = (x0_fine + 1).min(src_fine_width_minus_1);
+            let fx_fine = ((src_x_fine_fp & 0xFFFF) >> 8) as u32;
+            let inv_fx_fine = 256 - fx_fine;
+            
+            // Coarse level X coords (clamp to valid range)
+            let coarse_x = (coarse_src_x + local_x * scale_x_coarse).max(0.0);
+            let x0_coarse = (coarse_x.floor() as u32).min(src_coarse_width_minus_1);
+            let x1_coarse = (x0_coarse + 1).min(src_coarse_width_minus_1);
+            let fx_coarse = (((coarse_x - coarse_x.floor()) * 256.0) as u32).min(255);
+            let inv_fx_coarse = 256 - fx_coarse;
+            
+            // Fine level indices
+            let idx_fine_00 = src_fine_row0 + (x0_fine * 4) as usize;
+            let idx_fine_10 = src_fine_row0 + (x1_fine * 4) as usize;
+            let idx_fine_01 = src_fine_row1 + (x0_fine * 4) as usize;
+            let idx_fine_11 = src_fine_row1 + (x1_fine * 4) as usize;
+            
+            // Coarse level indices
+            let idx_coarse_00 = src_coarse_row0 + (x0_coarse * 4) as usize;
+            let idx_coarse_10 = src_coarse_row0 + (x1_coarse * 4) as usize;
+            let idx_coarse_01 = src_coarse_row1 + (x0_coarse * 4) as usize;
+            let idx_coarse_11 = src_coarse_row1 + (x1_coarse * 4) as usize;
+            
+            let dest_idx = dest_row + (x * 4) as usize;
+            
+            let fine_valid = idx_fine_11 + 3 < src_fine.len();
+            let coarse_valid = idx_coarse_11 + 3 < src_coarse.len();
+            
+            if dest_idx + 3 < dest.len() {
+                // Bilinear weights
+                let w_fine_00 = inv_fx_fine * inv_fy_fine;
+                let w_fine_10 = fx_fine * inv_fy_fine;
+                let w_fine_01 = inv_fx_fine * fy_fine;
+                let w_fine_11 = fx_fine * fy_fine;
+                
+                let w_coarse_00 = inv_fx_coarse * inv_fy_coarse;
+                let w_coarse_10 = fx_coarse * inv_fy_coarse;
+                let w_coarse_01 = inv_fx_coarse * fy_coarse;
+                let w_coarse_11 = fx_coarse * fy_coarse;
+                
+                for c in 0..4 {
+                    // Sample from fine level
+                    let fine_sample = if fine_valid {
+                        (src_fine[idx_fine_00 + c] as u32 * w_fine_00 +
+                         src_fine[idx_fine_10 + c] as u32 * w_fine_10 +
+                         src_fine[idx_fine_01 + c] as u32 * w_fine_01 +
+                         src_fine[idx_fine_11 + c] as u32 * w_fine_11) >> 16
+                    } else {
+                        0
+                    };
+                    
+                    // Sample from coarse level
+                    let coarse_sample = if coarse_valid {
+                        (src_coarse[idx_coarse_00 + c] as u32 * w_coarse_00 +
+                         src_coarse[idx_coarse_10 + c] as u32 * w_coarse_10 +
+                         src_coarse[idx_coarse_01 + c] as u32 * w_coarse_01 +
+                         src_coarse[idx_coarse_11 + c] as u32 * w_coarse_11) >> 16
+                    } else if fine_valid {
+                        fine_sample // Fallback to fine if coarse not available
+                    } else {
+                        0
+                    };
+                    
+                    // Blend between levels
+                    let blended = if fine_valid && coarse_valid {
+                        (fine_sample * blend_fine + coarse_sample * blend_coarse) >> 8
+                    } else if fine_valid {
+                        fine_sample
+                    } else if coarse_valid {
+                        coarse_sample
+                    } else {
+                        0
+                    };
+                    
+                    dest[dest_idx + c] = blended.min(255) as u8;
+                }
             }
         }
     }

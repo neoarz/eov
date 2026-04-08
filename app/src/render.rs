@@ -5,11 +5,23 @@
 
 use common::{TileCoord, Viewport, WsiFile};
 
+/// Texture filtering mode for rendering
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilterMode {
+    /// Nearest-neighbor sampling (fastest, pixelated)
+    #[default]
+    Nearest,
+    /// Bilinear filtering within a single mip level (smooth but may show level transitions)
+    Bilinear,
+    /// Trilinear filtering: bilinear sampling with mip-level blending (smoothest transitions)
+    Trilinear,
+}
+
 /// Render quality settings
 #[derive(Debug, Clone, Copy)]
 pub struct RenderQuality {
-    /// Use bilinear filtering (slower but smoother)
-    pub bilinear_filter: bool,
+    /// Texture filtering mode
+    pub filter_mode: FilterMode,
     /// Anti-aliasing for text overlay
     pub antialias: bool,
     /// Show tile boundaries for debugging
@@ -21,12 +33,87 @@ pub struct RenderQuality {
 impl Default for RenderQuality {
     fn default() -> Self {
         Self {
-            bilinear_filter: false, // Use nearest-neighbor for performance
+            filter_mode: FilterMode::Trilinear, // Use trilinear for best quality
             antialias: true,
             show_tile_boundaries: false,
             show_debug_info: false,
         }
     }
+}
+
+/// Result of trilinear level calculation
+#[derive(Debug, Clone, Copy)]
+pub struct TrilinearLevels {
+    /// The higher resolution (lower index) level
+    pub level_fine: u32,
+    /// The lower resolution (higher index) level
+    pub level_coarse: u32,
+    /// Blend factor: 0.0 = use level_fine, 1.0 = use level_coarse
+    pub blend: f64,
+}
+
+/// Calculate the two mip levels to blend for trilinear filtering
+pub fn calculate_trilinear_levels(wsi: &WsiFile, target_downsample: f64) -> TrilinearLevels {
+    let level_count = wsi.level_count();
+    
+    if level_count == 0 {
+        return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 };
+    }
+    
+    if level_count == 1 {
+        return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 };
+    }
+    
+    // Find the best level (where pixel density is closest to 1:1)
+    let best_level = wsi.best_level_for_downsample(target_downsample);
+    
+    let best_info = match wsi.level(best_level) {
+        Some(info) => info,
+        None => return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 },
+    };
+    
+    // Determine if we should blend with the next finer or coarser level
+    // If target_downsample > best_level's downsample, we're between best and next coarser
+    // If target_downsample < best_level's downsample, we're between best and next finer
+    let (level_fine, level_coarse) = if target_downsample >= best_info.downsample {
+        // Blend between best (fine) and next coarser level
+        if best_level + 1 < level_count {
+            (best_level, best_level + 1)
+        } else {
+            // At coarsest level, no blending
+            return TrilinearLevels { level_fine: best_level, level_coarse: best_level, blend: 0.0 };
+        }
+    } else {
+        // Blend between previous finer level and best (coarse)
+        if best_level > 0 {
+            (best_level - 1, best_level)
+        } else {
+            // At finest level, no blending
+            return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 };
+        }
+    };
+    
+    // Calculate blend factor using log space for perceptually linear transitions
+    let fine_info = wsi.level(level_fine);
+    let coarse_info = wsi.level(level_coarse);
+    
+    let (fine_ds, coarse_ds) = match (fine_info, coarse_info) {
+        (Some(f), Some(c)) => (f.downsample, c.downsample),
+        _ => return TrilinearLevels { level_fine, level_coarse, blend: 0.0 },
+    };
+    
+    // Log-space interpolation for smooth transitions
+    let log_target = target_downsample.ln();
+    let log_fine = fine_ds.ln();
+    let log_coarse = coarse_ds.ln();
+    
+    let blend = if (log_coarse - log_fine).abs() < 0.001 {
+        0.0
+    } else {
+        ((log_target - log_fine) / (log_coarse - log_fine)).clamp(0.0, 1.0)
+    };
+    
+    TrilinearLevels { level_fine, level_coarse, blend }
 }
 
 /// Render statistics for performance monitoring
