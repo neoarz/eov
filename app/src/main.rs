@@ -834,14 +834,15 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     // Check if we switched to a different file - need to force re-render
     let file_switched = state.last_rendered_file_id != Some(file_id);
     
-    let Some(file) = state.open_files.iter_mut().find(|f| f.id == file_id) else {
-        return;
-    };
+    {
+        let Some(file) = state.open_files.iter_mut().find(|f| f.id == file_id) else {
+            return;
+        };
     
-    // If file switched, reset frame_count to force first-frame render (skips cache checks)
-    if file_switched {
-        file.frame_count = 0;
-    }
+        // If file switched, reset frame_count to force first-frame render (skips cache checks)
+        if file_switched {
+            file.frame_count = 0;
+        }
 
     // Get viewport dimensions from window
     let window_width = ui.get_viewport_width() as f64;
@@ -985,6 +986,12 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
             // Render secondary viewport
             render_secondary_viewport(ui, file, tile_cache);
         }
+    }
+    } // End of file borrow scope
+    
+    // Track which file we last rendered (must be after file borrow ends)
+    if file_switched {
+        state.last_rendered_file_id = Some(file_id);
     }
 }
 
