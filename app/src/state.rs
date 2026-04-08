@@ -154,6 +154,8 @@ pub struct OpenFile {
     pub last_secondary_center_y: f64,
     pub last_secondary_width: f64,
     pub last_secondary_height: f64,
+    /// Reusable render buffer for secondary viewport
+    pub secondary_render_buffer: Vec<u8>,
 }
 
 /// Pane identifier (left/primary or right/secondary)
@@ -385,6 +387,7 @@ impl AppState {
             last_secondary_center_y: 0.0,
             last_secondary_width: 0.0,
             last_secondary_height: 0.0,
+            secondary_render_buffer: Vec::new(),
         });
 
         self.active_file_id = Some(id);

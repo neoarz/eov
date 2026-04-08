@@ -1012,12 +1012,13 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     let is_first_frame = file.frame_count == 0;
     
     // Check if viewport changed since last render
+    // Use larger thresholds to avoid rendering for imperceptible changes
     let viewport_changed = 
-        (file.last_render_zoom - vp_zoom).abs() > 0.0001 ||
-        (file.last_render_center_x - vp_center_x).abs() > 0.1 ||
-        (file.last_render_center_y - vp_center_y).abs() > 0.1 ||
-        (file.last_render_width - vp_width).abs() > 0.1 ||
-        (file.last_render_height - vp_height).abs() > 0.1;
+        (file.last_render_zoom - vp_zoom).abs() > 0.001 ||
+        (file.last_render_center_x - vp_center_x).abs() > 1.0 ||
+        (file.last_render_center_y - vp_center_y).abs() > 1.0 ||
+        (file.last_render_width - vp_width).abs() > 1.0 ||
+        (file.last_render_height - vp_height).abs() > 1.0;
     
     // Calculate trilinear levels for smooth mip transitions
     let trilinear = render::calculate_trilinear_levels(&file.wsi, vp.effective_downsample());
@@ -1158,11 +1159,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     dbg_print!("[RENDER] clearing buffer len={}", file.render_buffer.len());
     
-    // Fast clear to dark background (30, 30, 30, 255) using chunks
-    let pattern = [30u8, 30, 30, 255];
-    for chunk in file.render_buffer.chunks_exact_mut(4) {
-        chunk.copy_from_slice(&pattern);
-    }
+    // Fast clear to dark background using u32 writes (RGBA = 30,30,30,255 = 0xFF1E1E1E in little-endian)
+    fast_fill_rgba(&mut file.render_buffer, 30, 30, 30, 255);
     
     dbg_print!("[RENDER] buffer cleared");
     
@@ -1247,11 +1245,10 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     dbg_print!("[RENDER] starting second pass (high-res tiles), count={}", cached_tiles.len());
     
-    // Disable trilinear for now - just use bilinear
-    let do_trilinear = false;
+    // Trilinear blending disabled - causes pixel corruption at level boundaries
+    // TODO: Fix trilinear edge cases before re-enabling
     let _coarse_level_info = file.wsi.level(trilinear.level_coarse);
-    // let do_trilinear = trilinear.blend > 0.01 && trilinear.level_fine != trilinear.level_coarse 
-    //                    && coarse_level_info.is_some() && !cached_coarse_tiles.is_empty();
+    let do_trilinear = false;
     
     dbg_print!("[RENDER] trilinear: blend={:.3} do_trilinear={}", trilinear.blend, do_trilinear);
     
@@ -1414,7 +1411,7 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     );
     file.tile_loader.set_wanted_tiles(wanted);
     
-    // Create a buffer for rendering
+    // Reuse persistent buffer for rendering (avoid per-frame allocation)
     let render_width = vp.width as u32;
     let render_height = vp.height.max(1.0) as u32;
     
@@ -1422,12 +1419,17 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         return;
     }
     
-    let mut buffer = vec![30u8; (render_width * render_height * 4) as usize]; // Dark background
+    let buffer_size = (render_width * render_height * 4) as usize;
     
-    // Set alpha channel
-    for i in (3..buffer.len()).step_by(4) {
-        buffer[i] = 255;
+    // Resize buffer only if dimensions changed
+    if file.secondary_render_buffer.len() != buffer_size {
+        file.secondary_render_buffer.resize(buffer_size, 0);
     }
+    
+    // Fast clear to dark background
+    fast_fill_rgba(&mut file.secondary_render_buffer, 30, 30, 30, 255);
+    
+    let buffer = &mut file.secondary_render_buffer;
     
     let level_info = match file.wsi.level(level) {
         Some(info) => info,
@@ -1481,7 +1483,7 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             }
             
             blit_tile(
-                &mut buffer,
+                buffer,
                 render_width,
                 render_height,
                 &fallback_tile.data,
@@ -1516,7 +1518,7 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         let screen_h = screen_y_end - screen_y;
         
         blit_tile(
-            &mut buffer,
+            buffer,
             render_width,
             render_height,
             &tile_data.data,
@@ -1530,11 +1532,55 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     }
     
     // Create image from buffer
-    if let Some(pixel_buffer) = create_image_buffer(&buffer, render_width, render_height) {
+    if let Some(pixel_buffer) = create_image_buffer(buffer, render_width, render_height) {
         ui.set_secondary_viewport_content(Image::from_rgba8(pixel_buffer));
     }
 }
 
+/// Fast fill RGBA buffer with a single color using u32 writes
+/// This is ~4x faster than byte-by-byte writes on most architectures
+#[inline(always)]
+fn fast_fill_rgba(buffer: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
+    // Pack RGBA into u32 (little-endian: ABGR order in memory)
+    let pixel = u32::from_ne_bytes([r, g, b, a]);
+    
+    // Cast buffer to u32 slice for faster writes
+    // SAFETY: Buffer length is always multiple of 4 (RGBA pixels)
+    if buffer.len() >= 4 && buffer.len() % 4 == 0 {
+        let (prefix, pixels, suffix) = unsafe { buffer.align_to_mut::<u32>() };
+        
+        // Handle unaligned prefix bytes
+        for chunk in prefix.chunks_exact_mut(4) {
+            chunk[0] = r;
+            chunk[1] = g;
+            chunk[2] = b;
+            chunk[3] = a;
+        }
+        
+        // Fast fill aligned u32s
+        pixels.fill(pixel);
+        
+        // Handle unaligned suffix bytes
+        for chunk in suffix.chunks_exact_mut(4) {
+            chunk[0] = r;
+            chunk[1] = g;
+            chunk[2] = b;
+            chunk[3] = a;
+        }
+    } else {
+        // Fallback for small or misaligned buffers
+        for chunk in buffer.chunks_exact_mut(4) {
+            chunk[0] = r;
+            chunk[1] = g;
+            chunk[2] = b;
+            chunk[3] = a;
+        }
+    }
+}
+
+/// Optimized bilinear tile blitter with cache-friendly access patterns
+/// Uses fixed-point arithmetic and minimizes bounds checking
+#[inline(always)]
 fn blit_tile(
     dest: &mut [u8],
     dest_width: u32,
@@ -1565,77 +1611,84 @@ fn blit_tile(
     let end_x = (dest_x + scaled_width).min(dest_width as i32) as u32;
     let end_y = (dest_y + scaled_height).min(dest_height as i32) as u32;
     
+    if start_x >= end_x || start_y >= end_y {
+        return;
+    }
+    
     // Use standard texture mapping: src_width / scaled_width ratio
     // This ensures each source pixel covers exactly (scaled_width / src_width) dest pixels
     // avoiding edge stretching at tile boundaries
     let scale_x_fp = ((src_width as u64) << 16) / (scaled_width as u64).max(1);
     let scale_y_fp = ((src_height as u64) << 16) / (scaled_height as u64).max(1);
     
-    let src_width_minus_1 = (src_width.saturating_sub(1)) as u32;
-    let src_height_minus_1 = (src_height.saturating_sub(1)) as u32;
-    let dest_stride = dest_width * 4;
-    let src_stride = src_width * 4;
+    let src_width_minus_1 = src_width.saturating_sub(1);
+    let src_height_minus_1 = src_height.saturating_sub(1);
+    let dest_stride = (dest_width * 4) as usize;
+    let src_stride = (src_width * 4) as usize;
     
+    // Pre-validate that source has enough data for any valid sample
+    // Max source index = (src_height-1) * src_stride + (src_width-1) * 4 + 3
+    let src_max_idx = src_height_minus_1 as usize * src_stride 
+        + src_width_minus_1 as usize * 4 + 3;
+    if src.len() <= src_max_idx {
+        return; // Source buffer too small
+    }
+    
+    // Pre-validate destination bounds
+    let dest_max_idx = (end_y - 1) as usize * dest_stride + (end_x - 1) as usize * 4 + 3;
+    if dest.len() <= dest_max_idx {
+        return; // Destination buffer too small
+    }
+    
+    // Now we can use unchecked indexing safely
     for y in start_y..end_y {
-        let src_y_fp = ((y as i32 - dest_y) as u64 * scale_y_fp) as u32;
+        let local_y = (y as i32 - dest_y) as u64;
+        let src_y_fp = (local_y * scale_y_fp) as u32;
         let y0 = (src_y_fp >> 16).min(src_height_minus_1);
         let y1 = (y0 + 1).min(src_height_minus_1);
         let fy = ((src_y_fp & 0xFFFF) >> 8) as u32; // 8-bit fraction
         let inv_fy = 256 - fy;
         
-        let dest_row = (y * dest_stride) as usize;
-        let src_row0 = (y0 * src_stride) as usize;
-        let src_row1 = (y1 * src_stride) as usize;
+        let dest_row = y as usize * dest_stride;
+        let src_row0 = y0 as usize * src_stride;
+        let src_row1 = y1 as usize * src_stride;
         
         for x in start_x..end_x {
-            let src_x_fp = ((x as i32 - dest_x) as u64 * scale_x_fp) as u32;
+            let local_x = (x as i32 - dest_x) as u64;
+            let src_x_fp = (local_x * scale_x_fp) as u32;
             let x0 = (src_x_fp >> 16).min(src_width_minus_1);
             let x1 = (x0 + 1).min(src_width_minus_1);
             let fx = ((src_x_fp & 0xFFFF) >> 8) as u32; // 8-bit fraction
             let inv_fx = 256 - fx;
             
-            let idx00 = src_row0 + (x0 * 4) as usize;
-            let idx10 = src_row0 + (x1 * 4) as usize;
-            let idx01 = src_row1 + (x0 * 4) as usize;
-            let idx11 = src_row1 + (x1 * 4) as usize;
-            let dest_idx = dest_row + (x * 4) as usize;
+            let x0_4 = x0 as usize * 4;
+            let x1_4 = x1 as usize * 4;
+            let dest_idx = dest_row + x as usize * 4;
             
-            if idx11 + 3 < src.len() && dest_idx + 3 < dest.len() {
-                // Bilinear interpolation using fixed-point math
-                // Weight factors (8-bit precision, sum to 256*256 = 65536)
-                let w00 = inv_fx * inv_fy;
-                let w10 = fx * inv_fy;
-                let w01 = inv_fx * fy;
-                let w11 = fx * fy;
+            // Bilinear interpolation using fixed-point math
+            // Weight factors (8-bit precision, sum to 256*256 = 65536)
+            let w00 = inv_fx * inv_fy;
+            let w10 = fx * inv_fy;
+            let w01 = inv_fx * fy;
+            let w11 = fx * fy;
+            
+            // SAFETY: We pre-validated all bounds above
+            unsafe {
+                let s00 = src.get_unchecked(src_row0 + x0_4..src_row0 + x0_4 + 4);
+                let s10 = src.get_unchecked(src_row0 + x1_4..src_row0 + x1_4 + 4);
+                let s01 = src.get_unchecked(src_row1 + x0_4..src_row1 + x0_4 + 4);
+                let s11 = src.get_unchecked(src_row1 + x1_4..src_row1 + x1_4 + 4);
+                let d = dest.get_unchecked_mut(dest_idx..dest_idx + 4);
                 
-                // Unrolled channel interpolation
-                dest[dest_idx] = ((
-                    src[idx00] as u32 * w00 +
-                    src[idx10] as u32 * w10 +
-                    src[idx01] as u32 * w01 +
-                    src[idx11] as u32 * w11
-                ) >> 16) as u8;
-                
-                dest[dest_idx + 1] = ((
-                    src[idx00 + 1] as u32 * w00 +
-                    src[idx10 + 1] as u32 * w10 +
-                    src[idx01 + 1] as u32 * w01 +
-                    src[idx11 + 1] as u32 * w11
-                ) >> 16) as u8;
-                
-                dest[dest_idx + 2] = ((
-                    src[idx00 + 2] as u32 * w00 +
-                    src[idx10 + 2] as u32 * w10 +
-                    src[idx01 + 2] as u32 * w01 +
-                    src[idx11 + 2] as u32 * w11
-                ) >> 16) as u8;
-                
-                dest[dest_idx + 3] = ((
-                    src[idx00 + 3] as u32 * w00 +
-                    src[idx10 + 3] as u32 * w10 +
-                    src[idx01 + 3] as u32 * w01 +
-                    src[idx11 + 3] as u32 * w11
-                ) >> 16) as u8;
+                // Unrolled RGBA interpolation
+                d[0] = ((s00[0] as u32 * w00 + s10[0] as u32 * w10 + 
+                         s01[0] as u32 * w01 + s11[0] as u32 * w11) >> 16) as u8;
+                d[1] = ((s00[1] as u32 * w00 + s10[1] as u32 * w10 + 
+                         s01[1] as u32 * w01 + s11[1] as u32 * w11) >> 16) as u8;
+                d[2] = ((s00[2] as u32 * w00 + s10[2] as u32 * w10 + 
+                         s01[2] as u32 * w01 + s11[2] as u32 * w11) >> 16) as u8;
+                d[3] = ((s00[3] as u32 * w00 + s10[3] as u32 * w10 + 
+                         s01[3] as u32 * w01 + s11[3] as u32 * w11) >> 16) as u8;
             }
         }
     }
