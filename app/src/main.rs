@@ -1074,17 +1074,77 @@ fn setup_callbacks(
         });
     }
 
-    // Window drag (custom title bar)
+    // Window drag (custom title bar) — intercept winit events directly so Slint
+    // never sees the pointer-down that initiates a drag. This prevents Slint's
+    // input grab state from getting stuck when the compositor takes over the move.
     {
-        let ui_weak = ui_weak.clone();
+        use slint::winit_030::{WinitWindowAccessor, winit, EventResult};
+        use std::cell::Cell;
 
-        ui.on_window_drag(move |dx, dy| {
-            if let Some(ui) = ui_weak.upgrade() {
-                let pos = ui.window().position();
-                let scale = ui.window().scale_factor();
-                let new_x = pos.x + (dx * scale) as i32;
-                let new_y = pos.y + (dy * scale) as i32;
-                ui.window().set_position(slint::PhysicalPosition::new(new_x, new_y));
+        let last_cursor_pos = Rc::new(Cell::new((0.0f64, 0.0f64)));
+        let last_press_time = Rc::new(Cell::new(std::time::Instant::now()));
+        let click_count = Rc::new(Cell::new(0u32));
+        let ui_weak_drag = ui_weak.clone();
+
+        ui.window().on_winit_window_event({
+            let last_cursor_pos = Rc::clone(&last_cursor_pos);
+            let last_press_time = Rc::clone(&last_press_time);
+            let click_count = Rc::clone(&click_count);
+
+            move |_window, event| {
+                match event {
+                    winit::event::WindowEvent::CursorMoved { position, .. } => {
+                        last_cursor_pos.set((position.x, position.y));
+                        EventResult::Propagate
+                    }
+                    winit::event::WindowEvent::MouseInput {
+                        state: winit::event::ElementState::Pressed,
+                        button: winit::event::MouseButton::Left,
+                        ..
+                    } => {
+                        let (cx, cy) = last_cursor_pos.get();
+                        let scale = _window.scale_factor() as f64;
+                        let logical_y = cy / scale;
+                        let logical_x = cx / scale;
+
+                        // Toolbar is 40 logical px tall.
+                        // Exclude the right 138px (3 × 46px window action buttons).
+                        let toolbar_height = 40.0;
+                        let Some(ui) = ui_weak_drag.upgrade() else {
+                            return EventResult::Propagate;
+                        };
+                        let window_width = ui.window().size().width as f64 / scale;
+                        let buttons_zone_start = window_width - 138.0;
+
+                        if logical_y < toolbar_height && logical_x < buttons_zone_start {
+                            // Track double-click for maximize/restore
+                            let now = std::time::Instant::now();
+                            if now.duration_since(last_press_time.get()).as_millis() < 400 {
+                                click_count.set(click_count.get() + 1);
+                            } else {
+                                click_count.set(1);
+                            }
+                            last_press_time.set(now);
+
+                            if click_count.get() >= 2 {
+                                // Double-click → toggle maximize
+                                click_count.set(0);
+                                let maximized = ui.window().is_maximized();
+                                ui.window().set_maximized(!maximized);
+                                EventResult::PreventDefault
+                            } else {
+                                // Single click → start drag
+                                ui.window().with_winit_window(|w| {
+                                    let _ = w.drag_window();
+                                });
+                                EventResult::PreventDefault
+                            }
+                        } else {
+                            EventResult::Propagate
+                        }
+                    }
+                    _ => EventResult::Propagate,
+                }
             }
         });
     }
