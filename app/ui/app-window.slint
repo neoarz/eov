@@ -250,7 +250,11 @@ component Tab inherits Rectangle {
                 self.lmb-down = false;
             }
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
-                root.context-menu(data.id, self.mouse-x, self.mouse-y);
+                root.context-menu(
+                    data.id,
+                    self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y,
+                );
             }
         }
     }
@@ -1826,8 +1830,8 @@ export component AppWindow inherits Window {
                 open-recent-file(path) => { root.open-recent-file(path); }
                 tab-context-menu(pane, id, x, y) => {
                     root.context-menu-tab-id = id;
-                    root.context-menu-x = x + 0px; // Offset for tab bar position
-                    root.context-menu-y = y + 75px; // Account for toolbar + tab bar
+                    root.context-menu-x = x;
+                    root.context-menu-y = y;
                     root.context-menu-items = [
                         { id: "close", label: "Close", shortcut: "Ctrl+W", enabled: true, separator-after: false },
                         { id: "close-others", label: "Close Others", shortcut: "", enabled: pane == 0 ? root.primary-tabs.length > 1 : root.secondary-tabs.length > 1, separator-after: false },
