@@ -39,7 +39,8 @@ pub fn resolve_config_path() -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
-    let home = dirs::home_dir().context("failed to determine the home directory for EOSMOL config")?;
+    let home =
+        dirs::home_dir().context("failed to determine the home directory for EOSMOL config")?;
     Ok(home.join(".eosin").join("eosmol.toml"))
 }
 
@@ -59,16 +60,15 @@ pub fn load_render_backend() -> Result<Option<RenderBackend>> {
 pub fn save_render_backend(backend: RenderBackend) -> Result<()> {
     let path = resolve_config_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create config directory {}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create config directory {}", parent.display()))?;
     }
 
     let config = AppConfig {
         render_backend: Some(ConfigRenderBackend::from(backend)),
     };
-    let contents = toml::to_string_pretty(&config)
-        .context("failed to serialize EOSMOL configuration")?;
+    let contents =
+        toml::to_string_pretty(&config).context("failed to serialize EOSMOL configuration")?;
     fs::write(&path, contents)
         .with_context(|| format!("failed to write config file at {}", path.display()))?;
     Ok(())

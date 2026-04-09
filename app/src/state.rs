@@ -1,10 +1,10 @@
 //! Application state management
 
-use common::{TileManager, ViewportState, WsiFile};
 use crate::tile_loader::TileLoader;
+use common::{TileManager, ViewportState, WsiFile};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderBackend {
@@ -77,13 +77,18 @@ impl RegionOfInterest {
     pub fn is_valid(&self) -> bool {
         self.width > 0.0 && self.height > 0.0
     }
-    
+
     pub fn from_points(p1: ImagePoint, p2: ImagePoint) -> Self {
         let x = p1.x.min(p2.x);
         let y = p1.y.min(p2.y);
         let width = (p1.x - p2.x).abs();
         let height = (p1.y - p2.y).abs();
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -315,27 +320,27 @@ impl AppState {
             render_loop_running: false,
         }
     }
-    
+
     /// Get the config directory for storing recent files
     fn config_dir() -> Option<PathBuf> {
         dirs::config_dir().map(|p| p.join("eosmol"))
     }
-    
+
     /// Get the path to the recent files store
     fn recent_files_path() -> Option<PathBuf> {
         Self::config_dir().map(|p| p.join("recent_files.txt"))
     }
-    
+
     /// Load recently opened files from disk
     fn load_recent_files() -> Vec<RecentFile> {
         let Some(path) = Self::recent_files_path() else {
             return Vec::new();
         };
-        
+
         let Ok(content) = fs::read_to_string(&path) else {
             return Vec::new();
         };
-        
+
         content
             .lines()
             .filter_map(|line| {
@@ -349,42 +354,42 @@ impl AppState {
             .take(MAX_RECENT_FILES)
             .collect()
     }
-    
+
     /// Save recently opened files to disk
     fn save_recent_files(&self) {
         let Some(dir) = Self::config_dir() else {
             return;
         };
-        
-        if !dir.exists()
-            && fs::create_dir_all(&dir).is_err() {
-                return;
-            }
-        
+
+        if !dir.exists() && fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+
         let Some(path) = Self::recent_files_path() else {
             return;
         };
-        
-        let content: String = self.recent_files
+
+        let content: String = self
+            .recent_files
             .iter()
             .map(|f| f.path.to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         let _ = fs::write(path, content);
     }
-    
+
     /// Add a file to the recently opened list
     pub fn add_to_recent(&mut self, path: &PathBuf) {
         // Remove if already exists (we'll re-add at top)
         self.recent_files.retain(|f| f.path != *path);
-        
+
         // Add to front
         self.recent_files.insert(0, RecentFile::new(path.clone()));
-        
+
         // Trim to max size
         self.recent_files.truncate(MAX_RECENT_FILES);
-        
+
         // Save to disk
         self.save_recent_files();
     }
@@ -453,9 +458,10 @@ impl AppState {
 
     fn ensure_secondary_viewport_for_file(&mut self, id: i32) {
         if let Some(file) = self.get_file_mut(id)
-            && file.secondary_viewport.is_none() {
-                file.secondary_viewport = Some(file.viewport.clone());
-            }
+            && file.secondary_viewport.is_none()
+        {
+            file.secondary_viewport = Some(file.viewport.clone());
+        }
     }
 
     fn add_tab_to_pane_if_missing(&mut self, pane: PaneId, id: i32) {
@@ -471,9 +477,11 @@ impl AppState {
     fn remove_tab_from_pane(&mut self, pane: PaneId, id: i32) {
         let removed_index = {
             let tabs = self.tab_ids_for_pane_mut(pane);
-            tabs.iter().position(|&tab_id| tab_id == id).inspect(|&index| {
-                tabs.remove(index);
-            })
+            tabs.iter()
+                .position(|&tab_id| tab_id == id)
+                .inspect(|&index| {
+                    tabs.remove(index);
+                })
         };
 
         if let Some(index) = removed_index {
@@ -560,7 +568,7 @@ impl AppState {
         self.set_focused_pane(pane);
         self.needs_render = true;
     }
-    
+
     /// Create a new home tab and return its ID.
     /// If the pane already has a home tab, switch to it instead.
     pub fn create_home_tab(&mut self) -> i32 {
@@ -583,7 +591,7 @@ impl AppState {
         self.activate_tab_in_pane(pane, id);
         id
     }
-    
+
     /// Close a home tab
     pub fn close_home_tab(&mut self, id: i32) {
         self.home_tabs.retain(|&tab_id| tab_id != id);
@@ -600,7 +608,8 @@ impl AppState {
 
         self.remove_tab_from_pane(pane, id);
 
-        let still_open_elsewhere = self.primary_tabs.contains(&id) || self.secondary_tabs.contains(&id);
+        let still_open_elsewhere =
+            self.primary_tabs.contains(&id) || self.secondary_tabs.contains(&id);
         if still_open_elsewhere {
             self.needs_render = true;
             self.sync_active_file_id();
@@ -616,21 +625,21 @@ impl AppState {
 
         self.close_file(id);
     }
-    
+
     /// Check if an ID is a home tab
     pub fn is_home_tab(&self, id: i32) -> bool {
         self.home_tabs.contains(&id)
     }
-    
+
     /// Update FPS counter (call once per frame)
     pub fn update_fps(&mut self) {
         let now = std::time::Instant::now();
         self.frame_times.push(now);
-        
+
         // Keep only timestamps from the last second
         let one_second_ago = now - std::time::Duration::from_secs(1);
         self.frame_times.retain(|t| *t > one_second_ago);
-        
+
         // FPS = number of frames in the last second
         self.current_fps = self.frame_times.len() as f32;
     }
@@ -647,7 +656,7 @@ impl AppState {
     ) -> i32 {
         // Add to recent files
         self.add_to_recent(&path);
-        
+
         let id = self.next_id;
         self.next_id += 1;
 
@@ -699,7 +708,7 @@ impl AppState {
         self.activate_tab_in_pane(target_pane, id);
         id
     }
-    
+
     /// Set the current tool and reset interaction state
     pub fn set_tool(&mut self, tool: Tool) {
         self.current_tool = tool;
@@ -707,11 +716,15 @@ impl AppState {
         self.candidate_point = None;
         self.needs_render = true;
         // Clear ROI when switching tools
-        if let Some(file) = self.open_files.iter_mut().find(|f| Some(f.id) == self.active_file_id) {
+        if let Some(file) = self
+            .open_files
+            .iter_mut()
+            .find(|f| Some(f.id) == self.active_file_id)
+        {
             file.roi = None;
         }
     }
-    
+
     /// Cancel current tool operation and return to Navigate
     pub fn cancel_tool(&mut self) {
         self.tool_state = ToolInteractionState::Idle;
@@ -719,7 +732,11 @@ impl AppState {
         self.current_tool = Tool::Navigate;
         self.needs_render = true;
         // Clear ROI when cancelling
-        if let Some(file) = self.open_files.iter_mut().find(|f| Some(f.id) == self.active_file_id) {
+        if let Some(file) = self
+            .open_files
+            .iter_mut()
+            .find(|f| Some(f.id) == self.active_file_id)
+        {
             file.roi = None;
         }
     }
@@ -728,9 +745,10 @@ impl AppState {
     pub fn enable_split(&mut self) {
         self.split_enabled = true;
         if self.secondary_tabs.is_empty()
-            && let Some(primary_id) = self.primary_active_tab_id {
-                self.duplicate_tab_to_pane(primary_id, PaneId::Secondary);
-            }
+            && let Some(primary_id) = self.primary_active_tab_id
+        {
+            self.duplicate_tab_to_pane(primary_id, PaneId::Secondary);
+        }
         self.set_focused_pane(PaneId::Secondary);
         self.needs_render = true;
     }
@@ -744,9 +762,10 @@ impl AppState {
             }
         }
         if self.focused_pane == PaneId::Secondary
-            && let Some(id) = self.secondary_active_tab_id {
-                self.primary_active_tab_id = Some(id);
-            }
+            && let Some(id) = self.secondary_active_tab_id
+        {
+            self.primary_active_tab_id = Some(id);
+        }
         self.split_enabled = false;
         self.secondary_tabs.clear();
         self.secondary_active_tab_id = None;
@@ -758,7 +777,8 @@ impl AppState {
     #[allow(dead_code)]
     pub fn focused_viewport_mut(&mut self) -> Option<&mut ViewportState> {
         let active_id = self.active_file_id_for_pane(self.focused_pane)?;
-        self.open_files.iter_mut()
+        self.open_files
+            .iter_mut()
             .find(|f| f.id == active_id)
             .and_then(|f| match self.focused_pane {
                 PaneId::Primary => Some(&mut f.viewport),
@@ -775,7 +795,7 @@ impl AppState {
     /// Close a file by ID
     pub fn close_file(&mut self, id: i32) {
         let index = self.open_files.iter().position(|f| f.id == id);
-        
+
         if let Some(idx) = index {
             self.open_files.remove(idx);
 
@@ -796,8 +816,12 @@ impl AppState {
                 self.secondary_active_tab_id = self.secondary_tabs.first().copied();
             }
 
-            self.last_primary_rendered_file_id = self.last_primary_rendered_file_id.filter(|&file_id| file_id != id);
-            self.last_secondary_rendered_file_id = self.last_secondary_rendered_file_id.filter(|&file_id| file_id != id);
+            self.last_primary_rendered_file_id = self
+                .last_primary_rendered_file_id
+                .filter(|&file_id| file_id != id);
+            self.last_secondary_rendered_file_id = self
+                .last_secondary_rendered_file_id
+                .filter(|&file_id| file_id != id);
 
             self.needs_render = true;
             self.sync_active_file_id();
@@ -866,15 +890,18 @@ impl AppState {
     /// Get the active viewport mutably (respects focused pane in split view)
     pub fn active_viewport_mut(&mut self) -> Option<&mut ViewportState> {
         let pane = self.focused_pane;
-        let effective_pane = if self.split_enabled { pane } else { PaneId::Primary };
+        let effective_pane = if self.split_enabled {
+            pane
+        } else {
+            PaneId::Primary
+        };
         let active_id = self.active_file_id_for_pane(effective_pane)?;
-        self.open_files.iter_mut()
+        self.open_files
+            .iter_mut()
             .find(|f| f.id == active_id)
-            .and_then(|f| {
-                match effective_pane {
-                    PaneId::Primary => Some(&mut f.viewport),
-                    PaneId::Secondary => f.secondary_viewport.as_mut(),
-                }
+            .and_then(|f| match effective_pane {
+                PaneId::Primary => Some(&mut f.viewport),
+                PaneId::Secondary => f.secondary_viewport.as_mut(),
             })
     }
 }

@@ -4,7 +4,7 @@
 //! SVS, TIFF, and other formats supported by OpenSlide.
 
 use crate::{Error, Result};
-use openslide_rs::{OpenSlide, Address, Region, Size};
+use openslide_rs::{Address, OpenSlide, Region, Size};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
@@ -83,7 +83,7 @@ impl WsiFile {
     /// Open a WSI file from the given path
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        
+
         if !path.exists() {
             return Err(Error::FileNotFound(path.display().to_string()));
         }
@@ -93,7 +93,8 @@ impl WsiFile {
         let slide = OpenSlide::new(path)
             .map_err(|e| Error::OpenFile(format!("{}: {}", path.display(), e)))?;
 
-        let level_count = slide.get_level_count()
+        let level_count = slide
+            .get_level_count()
             .map_err(|e| Error::OpenSlide(e.to_string()))?;
 
         debug!("WSI has {} levels", level_count);
@@ -101,17 +102,31 @@ impl WsiFile {
         // Collect level information
         let mut levels = Vec::with_capacity(level_count as usize);
         for level in 0..level_count {
-            let size = slide.get_level_dimensions(level)
-                .map_err(|e| Error::OpenSlide(format!("Failed to get dimensions for level {}: {}", level, e)))?;
-            
-            let downsample = slide.get_level_downsample(level)
-                .map_err(|e| Error::OpenSlide(format!("Failed to get downsample for level {}: {}", level, e)))?;
-            
+            let size = slide.get_level_dimensions(level).map_err(|e| {
+                Error::OpenSlide(format!(
+                    "Failed to get dimensions for level {}: {}",
+                    level, e
+                ))
+            })?;
+
+            let downsample = slide.get_level_downsample(level).map_err(|e| {
+                Error::OpenSlide(format!(
+                    "Failed to get downsample for level {}: {}",
+                    level, e
+                ))
+            })?;
+
             // Get tile dimensions from properties if available
-            let tile_width = slide.properties.openslide_properties.levels
+            let tile_width = slide
+                .properties
+                .openslide_properties
+                .levels
                 .get(level as usize)
                 .and_then(|l| l.tile_width);
-            let tile_height = slide.properties.openslide_properties.levels
+            let tile_height = slide
+                .properties
+                .openslide_properties
+                .levels
                 .get(level as usize)
                 .and_then(|l| l.tile_height);
 
@@ -124,20 +139,25 @@ impl WsiFile {
                 tile_height,
             });
 
-            debug!("Level {}: {}x{} (downsample: {:.2})", level, size.w, size.h, downsample);
+            debug!(
+                "Level {}: {}x{} (downsample: {:.2})",
+                level, size.w, size.h, downsample
+            );
         }
 
         // Get base dimensions
-        let size0 = slide.get_level0_dimensions()
+        let size0 = slide
+            .get_level0_dimensions()
             .map_err(|e| Error::OpenSlide(e.to_string()))?;
 
         // Extract properties
         let openslide_props = &slide.properties.openslide_properties;
         let aperio_props = &slide.properties.aperio_properties;
-        
+
         let properties = WsiProperties {
             path: path.to_path_buf(),
-            filename: path.file_name()
+            filename: path
+                .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
             vendor: openslide_props.vendor.clone(),
@@ -208,7 +228,8 @@ impl WsiFile {
 
     /// Get the best level for the given downsample factor
     pub fn best_level_for_downsample(&self, downsample: f64) -> u32 {
-        self.slide.get_best_level_for_downsample(downsample)
+        self.slide
+            .get_best_level_for_downsample(downsample)
             .unwrap_or(0)
     }
 
@@ -218,7 +239,7 @@ impl WsiFile {
     }
 
     /// Read a region from the slide
-    /// 
+    ///
     /// # Arguments
     /// * `x` - X coordinate at level 0
     /// * `y` - Y coordinate at level 0
@@ -240,15 +261,20 @@ impl WsiFile {
         // Clamp coordinates to valid range for u32
         let x_u32 = x.max(0) as u32;
         let y_u32 = y.max(0) as u32;
-        
+
         let region = Region {
             address: Address { x: x_u32, y: y_u32 },
             level,
-            size: Size { w: width, h: height },
+            size: Size {
+                w: width,
+                h: height,
+            },
         };
 
         // read_region returns BGRA data, we need to convert to RGBA
-        let mut data = self.slide.read_region(&region)
+        let mut data = self
+            .slide
+            .read_region(&region)
             .map_err(|e| Error::ReadTile {
                 level,
                 x: x as u64,
@@ -265,7 +291,7 @@ impl WsiFile {
     }
 
     /// Read a tile at the specified coordinates
-    /// 
+    ///
     /// # Arguments
     /// * `level` - The level to read from
     /// * `tile_x` - Tile X coordinate
@@ -282,7 +308,8 @@ impl WsiFile {
         tile_y: u64,
         tile_size: u32,
     ) -> Result<Vec<u8>> {
-        let level_info = self.level(level)
+        let level_info = self
+            .level(level)
             .ok_or(Error::InvalidLevel(level, self.level_count() - 1))?;
 
         // Calculate pixel coordinates at level 0
@@ -292,7 +319,7 @@ impl WsiFile {
         // Clamp tile size to not exceed level bounds
         let tile_start_x = tile_x * tile_size as u64;
         let tile_start_y = tile_y * tile_size as u64;
-        
+
         let actual_width = (level_info.width - tile_start_x).min(tile_size as u64) as u32;
         let actual_height = (level_info.height - tile_start_y).min(tile_size as u64) as u32;
 
@@ -312,9 +339,15 @@ impl WsiFile {
         // Use the lowest resolution level
         let level = self.level_count() - 1;
         let level_info = self.level(level).unwrap();
-        
+
         // Read the entire level and resize
-        self.read_region(0, 0, level, level_info.width as u32, level_info.height as u32)
+        self.read_region(
+            0,
+            0,
+            level,
+            level_info.width as u32,
+            level_info.height as u32,
+        )
     }
 }
 
@@ -336,7 +369,7 @@ mod tests {
             eprintln!("Skipping test: fixture file not found at {:?}", path);
             return;
         }
-        
+
         let wsi = WsiFile::open(&path).expect("Failed to open WSI file");
         assert!(wsi.level_count() > 0);
         assert!(wsi.properties().width > 0);
@@ -352,7 +385,7 @@ mod tests {
 
         let wsi = WsiFile::open(&path).expect("Failed to open WSI file");
         let tile = wsi.read_tile(0, 0, 0).expect("Failed to read tile");
-        
+
         // Should have RGBA data
         assert!(!tile.is_empty());
     }
@@ -365,11 +398,11 @@ mod tests {
         }
 
         let wsi = WsiFile::open(&path).expect("Failed to open WSI file");
-        
+
         // At downsample 1.0, should return level 0
         let level = wsi.best_level_for_downsample(1.0);
         assert_eq!(level, 0);
-        
+
         // At very high downsample, should return highest level
         let level = wsi.best_level_for_downsample(1000.0);
         assert!(level < wsi.level_count());

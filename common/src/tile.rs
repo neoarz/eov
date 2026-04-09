@@ -3,9 +3,9 @@
 //! This module handles tile coordinates, tile requests, and tile data management
 //! for efficient rendering of whole slide images.
 
-use crate::{WsiFile, Result, Error};
-use std::sync::Arc;
+use crate::{Error, Result, WsiFile};
 use parking_lot::RwLock;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::trace;
 
@@ -24,7 +24,12 @@ pub struct TileCoord {
 
 impl TileCoord {
     pub fn new(level: u32, x: u64, y: u64, tile_size: u32) -> Self {
-        Self { level, x, y, tile_size }
+        Self {
+            level,
+            x,
+            y,
+            tile_size,
+        }
     }
 }
 
@@ -44,26 +49,31 @@ pub struct TileData {
 impl TileData {
     /// Create a new tile data instance
     pub fn new(coord: TileCoord, data: Vec<u8>, width: u32, height: u32) -> Self {
-        Self { coord, data, width, height }
+        Self {
+            coord,
+            data,
+            width,
+            height,
+        }
     }
 
     /// Create a placeholder tile (checkerboard pattern for debugging)
     pub fn placeholder(coord: TileCoord, tile_size: u32) -> Self {
         let mut data = vec![0u8; (tile_size * tile_size * 4) as usize];
-        
+
         // Create checkerboard pattern
         for y in 0..tile_size {
             for x in 0..tile_size {
                 let idx = ((y * tile_size + x) * 4) as usize;
                 let is_light = ((x / 16) + (y / 16)) % 2 == 0;
                 let color = if is_light { 200 } else { 150 };
-                data[idx] = color;     // R
+                data[idx] = color; // R
                 data[idx + 1] = color; // G
                 data[idx + 2] = color; // B
-                data[idx + 3] = 255;   // A
+                data[idx + 3] = 255; // A
             }
         }
-        
+
         Self {
             coord,
             data,
@@ -133,17 +143,19 @@ impl TileManager {
 
     /// Load a tile synchronously
     pub fn load_tile_sync(&self, coord: TileCoord) -> Result<TileData> {
-        let level_info = self.wsi.level(coord.level)
+        let level_info = self
+            .wsi
+            .level(coord.level)
             .ok_or(Error::InvalidLevel(coord.level, self.wsi.level_count() - 1))?;
 
         // Calculate actual tile dimensions (may be smaller at edges)
         let tile_start_x = coord.x * coord.tile_size as u64;
         let tile_start_y = coord.y * coord.tile_size as u64;
-        
-        let actual_width = (level_info.width.saturating_sub(tile_start_x))
-            .min(coord.tile_size as u64) as u32;
-        let actual_height = (level_info.height.saturating_sub(tile_start_y))
-            .min(coord.tile_size as u64) as u32;
+
+        let actual_width =
+            (level_info.width.saturating_sub(tile_start_x)).min(coord.tile_size as u64) as u32;
+        let actual_height =
+            (level_info.height.saturating_sub(tile_start_y)).min(coord.tile_size as u64) as u32;
 
         if actual_width == 0 || actual_height == 0 {
             return Err(Error::InvalidCoordinates {
@@ -158,13 +170,15 @@ impl TileManager {
             coord, actual_width, actual_height
         );
 
-        let data = self.wsi.read_tile_with_size(coord.level, coord.x, coord.y, coord.tile_size)?;
+        let data = self
+            .wsi
+            .read_tile_with_size(coord.level, coord.x, coord.y, coord.tile_size)?;
 
         Ok(TileData::new(coord, data, actual_width, actual_height))
     }
 
     /// Calculate visible tiles for a given viewport
-    /// 
+    ///
     /// Arguments:
     /// - level: the resolution level to use
     /// - bounds_left, bounds_top, bounds_right, bounds_bottom: visible area in level 0 coordinates
@@ -176,7 +190,14 @@ impl TileManager {
         bounds_right: f64,
         bounds_bottom: f64,
     ) -> Vec<TileCoord> {
-        self.visible_tiles_with_margin(level, bounds_left, bounds_top, bounds_right, bounds_bottom, 1)
+        self.visible_tiles_with_margin(
+            level,
+            bounds_left,
+            bounds_top,
+            bounds_right,
+            bounds_bottom,
+            1,
+        )
     }
 
     pub fn visible_tiles_with_margin(
@@ -194,7 +215,7 @@ impl TileManager {
         };
 
         let tile_size = self.tile_size_for_level(level) as f64;
-        
+
         // Convert bounds from level 0 to current level coordinates
         let level_left = bounds_left / level_info.downsample;
         let level_top = bounds_top / level_info.downsample;
@@ -211,12 +232,18 @@ impl TileManager {
             .min(level_info.tiles_y(self.tile_size));
 
         // Adaptive cap: allow larger visible sets on larger windows / zoomed-out views.
-        let tile_count = (end_tile_x.saturating_sub(start_tile_x)) * (end_tile_y.saturating_sub(start_tile_y));
+        let tile_count =
+            (end_tile_x.saturating_sub(start_tile_x)) * (end_tile_y.saturating_sub(start_tile_y));
         let max_tiles = tile_count.min(4096) as usize;
         if tile_count > 4096 {
             tracing::warn!(
                 "visible_tiles would return {} tiles (capped), level={}, bounds=({:.0},{:.0})-({:.0},{:.0})",
-                tile_count, level, bounds_left, bounds_top, bounds_right, bounds_bottom
+                tile_count,
+                level,
+                bounds_left,
+                bounds_top,
+                bounds_right,
+                bounds_bottom
             );
         }
 
@@ -235,13 +262,9 @@ impl TileManager {
     }
 
     /// Calculate tiles to prefetch (adjacent zoom levels)
-    /// 
+    ///
     /// Level numbering: 0 = highest resolution (most tiles), higher levels = lower resolution
-    pub fn prefetch_tiles(
-        &self,
-        current_tiles: &[TileCoord],
-        level: u32,
-    ) -> Vec<TileCoord> {
+    pub fn prefetch_tiles(&self, current_tiles: &[TileCoord], level: u32) -> Vec<TileCoord> {
         let mut prefetch = Vec::new();
         let level_count = self.wsi.level_count();
 
@@ -322,7 +345,7 @@ mod tests {
         let a = TileCoord::new(0, 1, 2, 256);
         let b = TileCoord::new(0, 1, 2, 256);
         let c = TileCoord::new(0, 1, 3, 256);
-        
+
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
@@ -331,7 +354,7 @@ mod tests {
     fn test_placeholder_tile() {
         let coord = TileCoord::new(0, 0, 0, 256);
         let tile = TileData::placeholder(coord, 256);
-        
+
         assert_eq!(tile.width, 256);
         assert_eq!(tile.height, 256);
         assert_eq!(tile.data.len(), 256 * 256 * 4);
@@ -346,10 +369,10 @@ mod tests {
 
         let wsi = WsiFile::open(&path).expect("Failed to open WSI file");
         let manager = TileManager::new(wsi);
-        
+
         let coord = TileCoord::new(0, 0, 0, 256);
         let tile = manager.load_tile_sync(coord).expect("Failed to load tile");
-        
+
         assert!(tile.width > 0);
         assert!(tile.height > 0);
         assert!(!tile.data.is_empty());
@@ -364,10 +387,10 @@ mod tests {
 
         let wsi = WsiFile::open(&path).expect("Failed to open WSI file");
         let manager = TileManager::new(wsi);
-        
+
         // Get tiles visible in a 1024x768 viewport at level 0, origin
         let tiles = manager.visible_tiles(0, 0.0, 0.0, 1024.0, 768.0);
-        
+
         assert!(!tiles.is_empty());
         // At zoom 1.0 and viewport 1024x768 with 256 size tiles,
         // we should have roughly 4x3 + margin tiles

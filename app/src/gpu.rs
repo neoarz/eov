@@ -141,16 +141,17 @@ impl GpuRenderer {
     }
 
     pub fn install(ui: &AppWindow, renderer: Rc<RefCell<Self>>) -> Result<()> {
-        ui.window().set_rendering_notifier(move |state, graphics_api| {
-            let mut renderer = renderer.borrow_mut();
-            match state {
-                RenderingState::RenderingSetup => renderer.initialize(graphics_api),
-                RenderingState::BeforeRendering => renderer.flush_pending_frames(),
-                RenderingState::RenderingTeardown => renderer.teardown(),
-                RenderingState::AfterRendering => {}
-                _ => {}
-            }
-        })?;
+        ui.window()
+            .set_rendering_notifier(move |state, graphics_api| {
+                let mut renderer = renderer.borrow_mut();
+                match state {
+                    RenderingState::RenderingSetup => renderer.initialize(graphics_api),
+                    RenderingState::BeforeRendering => renderer.flush_pending_frames(),
+                    RenderingState::RenderingTeardown => renderer.teardown(),
+                    RenderingState::AfterRendering => {}
+                    _ => {}
+                }
+            })?;
         Ok(())
     }
 
@@ -180,7 +181,11 @@ impl GpuRenderer {
 
         self.bind_surface_image(ui, slot);
 
-        let frame = QueuedFrame { width, height, draws };
+        let frame = QueuedFrame {
+            width,
+            height,
+            draws,
+        };
         match slot {
             SurfaceSlot::Primary => self.pending_primary = Some(frame),
             SurfaceSlot::Secondary => self.pending_secondary = Some(frame),
@@ -310,7 +315,13 @@ impl GpuRenderer {
         self.tile_textures.clear();
     }
 
-    fn ensure_surface(&mut self, ui: &AppWindow, slot: SurfaceSlot, width: u32, height: u32) -> bool {
+    fn ensure_surface(
+        &mut self,
+        ui: &AppWindow,
+        slot: SurfaceSlot,
+        width: u32,
+        height: u32,
+    ) -> bool {
         let Some(runtime) = self.runtime.as_mut() else {
             return false;
         };
@@ -369,8 +380,14 @@ impl GpuRenderer {
         };
 
         let image = match slot {
-            SurfaceSlot::Primary => runtime.primary_surface.as_ref().map(|surface| surface.image.clone()),
-            SurfaceSlot::Secondary => runtime.secondary_surface.as_ref().map(|surface| surface.image.clone()),
+            SurfaceSlot::Primary => runtime
+                .primary_surface
+                .as_ref()
+                .map(|surface| surface.image.clone()),
+            SurfaceSlot::Secondary => runtime
+                .secondary_surface
+                .as_ref()
+                .map(|surface| surface.image.clone()),
         };
 
         if let Some(image) = image {
@@ -390,14 +407,28 @@ impl GpuRenderer {
         let frame_id = self.frame_counter;
 
         if let Some(frame) = self.pending_primary.take()
-            && runtime.primary_surface.is_some() {
-                Self::render_frame(runtime, &mut self.tile_textures, SurfaceSlot::Primary, frame, frame_id);
-            }
+            && runtime.primary_surface.is_some()
+        {
+            Self::render_frame(
+                runtime,
+                &mut self.tile_textures,
+                SurfaceSlot::Primary,
+                frame,
+                frame_id,
+            );
+        }
 
         if let Some(frame) = self.pending_secondary.take()
-            && runtime.secondary_surface.is_some() {
-                Self::render_frame(runtime, &mut self.tile_textures, SurfaceSlot::Secondary, frame, frame_id);
-            }
+            && runtime.secondary_surface.is_some()
+        {
+            Self::render_frame(
+                runtime,
+                &mut self.tile_textures,
+                SurfaceSlot::Secondary,
+                frame,
+                frame_id,
+            );
+        }
 
         if self.tile_textures.len() > MAX_GPU_TILE_TEXTURES {
             let mut entries: Vec<_> = self
@@ -421,8 +452,14 @@ impl GpuRenderer {
         frame_id: u64,
     ) {
         let Some(surface_view) = (match slot {
-            SurfaceSlot::Primary => runtime.primary_surface.as_ref().map(|surface| surface.view.clone()),
-            SurfaceSlot::Secondary => runtime.secondary_surface.as_ref().map(|surface| surface.view.clone()),
+            SurfaceSlot::Primary => runtime
+                .primary_surface
+                .as_ref()
+                .map(|surface| surface.view.clone()),
+            SurfaceSlot::Secondary => runtime
+                .secondary_surface
+                .as_ref()
+                .map(|surface| surface.view.clone()),
         }) else {
             return;
         };
@@ -444,12 +481,16 @@ impl GpuRenderer {
         }
 
         if !vertices.is_empty() {
-            runtime.queue.write_buffer(&runtime.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+            runtime
+                .queue
+                .write_buffer(&runtime.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
         }
 
-        let mut encoder = runtime.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("viewport-tile-encoder"),
-        });
+        let mut encoder = runtime
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("viewport-tile-encoder"),
+            });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -478,30 +519,33 @@ impl GpuRenderer {
             render_pass.set_vertex_buffer(0, runtime.vertex_buffer.slice(..));
 
             for (index, draw) in frame.draws.iter().enumerate() {
-                let fine_texture = ensure_tile_texture(runtime, tile_textures, &draw.tile, frame_id);
+                let fine_texture =
+                    ensure_tile_texture(runtime, tile_textures, &draw.tile, frame_id);
                 let coarse_texture = draw
                     .coarse_tile
                     .as_ref()
                     .map(|tile| ensure_tile_texture(runtime, tile_textures, tile, frame_id))
                     .unwrap_or_else(|| fine_texture.clone());
-                let bind_group = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("viewport-tile-bind-group"),
-                    layout: &runtime.bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&fine_texture.view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&coarse_texture.view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&runtime.sampler),
-                        },
-                    ],
-                });
+                let bind_group = runtime
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("viewport-tile-bind-group"),
+                        layout: &runtime.bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&fine_texture.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&coarse_texture.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(&runtime.sampler),
+                            },
+                        ],
+                    });
                 render_pass.set_bind_group(0, &bind_group, &[]);
                 let start = (index * 6) as u32;
                 render_pass.draw(start..start + 6, 0..1);

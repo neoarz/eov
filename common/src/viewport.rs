@@ -136,8 +136,16 @@ impl Viewport {
         let margin_x = self.image_width * PAN_MARGIN_RATIO;
         let margin_y = self.image_height * PAN_MARGIN_RATIO;
 
-        self.center.x = self.center.x.max(-margin_x).min(self.image_width + margin_x);
-        self.center.y = self.center.y.max(-margin_y).min(self.image_height + margin_y);
+        self.center.x = self
+            .center
+            .x
+            .max(-margin_x)
+            .min(self.image_width + margin_x);
+        self.center.y = self
+            .center
+            .y
+            .max(-margin_y)
+            .min(self.image_height + margin_y);
     }
 
     /// Get the effective downsample factor for tile selection
@@ -194,7 +202,7 @@ pub struct MinimapRect {
 pub struct ViewportState {
     /// Base viewport
     pub viewport: Viewport,
-    
+
     // --- Pan inertia animation ---
     /// Is currently dragging
     is_dragging: bool,
@@ -206,7 +214,7 @@ pub struct ViewportState {
     inertia_start_velocity: DVec2,
     /// Inertia animation: start time
     inertia_start_time: Option<Instant>,
-    
+
     // --- Zoom animation ---
     /// Target zoom level (for smooth zoom)
     target_zoom: f64,
@@ -218,7 +226,7 @@ pub struct ViewportState {
     zoom_anchor_image: DVec2,
     /// Zoom animation start time
     zoom_start_time: Option<Instant>,
-    
+
     /// Last update time for physics
     last_update: Instant,
 }
@@ -263,7 +271,7 @@ impl ViewportState {
         let now = Instant::now();
         let current = DVec2::new(x, y);
         let delta = current - self.drag_start;
-        
+
         // Store sample with timestamp for velocity calculation
         self.velocity_samples.push((delta, now));
         // Keep only recent samples (last 100ms)
@@ -272,7 +280,7 @@ impl ViewportState {
 
         // Pan viewport
         self.viewport.pan(delta.x, delta.y);
-        
+
         self.drag_start = current;
         self.last_update = now;
     }
@@ -284,24 +292,24 @@ impl ViewportState {
         }
 
         self.is_dragging = false;
-        
+
         // Calculate average velocity from recent samples
         if self.velocity_samples.len() >= 2 {
             let now = Instant::now();
             let mut total_delta = DVec2::ZERO;
             let mut total_time = 0.0;
-            
+
             for (delta, _) in &self.velocity_samples {
                 total_delta += *delta;
             }
-            
+
             // Calculate time span of samples
-            if let (Some((_, first_time)), Some((_, last_time))) = 
-                (self.velocity_samples.first(), self.velocity_samples.last()) 
+            if let (Some((_, first_time)), Some((_, last_time))) =
+                (self.velocity_samples.first(), self.velocity_samples.last())
             {
                 total_time = last_time.duration_since(*first_time).as_secs_f64();
             }
-            
+
             if total_time > 0.001 {
                 // Velocity in screen pixels per second
                 let velocity = total_delta / total_time;
@@ -309,11 +317,15 @@ impl ViewportState {
                 if velocity.length() > 20.0 {
                     self.inertia_start_velocity = velocity;
                     self.inertia_start_time = Some(now);
-                    trace!("Starting pan inertia: velocity={:?} length={:.1}", velocity, velocity.length());
+                    trace!(
+                        "Starting pan inertia: velocity={:?} length={:.1}",
+                        velocity,
+                        velocity.length()
+                    );
                 }
             }
         }
-        
+
         self.velocity_samples.clear();
         self.last_update = Instant::now();
     }
@@ -332,19 +344,20 @@ impl ViewportState {
         // --- Pan inertia animation ---
         if let Some(start_time) = self.inertia_start_time {
             let elapsed = now.duration_since(start_time);
-            
+
             if elapsed < inertia_duration {
                 // Ease-out: velocity decreases over time (quadratic for smoother feel)
                 let t = elapsed.as_secs_f64() / inertia_duration.as_secs_f64();
                 let ease_out = (1.0 - t) * (1.0 - t); // Quadratic ease-out
-                
+
                 let dt = now.duration_since(self.last_update).as_secs_f64();
                 let current_velocity = self.inertia_start_velocity * ease_out;
-                
+
                 // Apply panning - velocity was measured in screen-space drag direction
                 // which matches pan() semantics (positive = image moves right)
-                self.viewport.pan(current_velocity.x * dt, current_velocity.y * dt);
-                
+                self.viewport
+                    .pan(current_velocity.x * dt, current_velocity.y * dt);
+
                 is_animating = true;
                 trace!("Pan inertia: t={:.2}, velocity={:?}", t, current_velocity);
             } else {
@@ -356,47 +369,45 @@ impl ViewportState {
         // --- Zoom animation ---
         if let Some(start_time) = self.zoom_start_time {
             let elapsed = now.duration_since(start_time);
-            
+
             if elapsed < zoom_duration {
                 // Ease-out cubic: fast start, slow end
                 let t = elapsed.as_secs_f64() / zoom_duration.as_secs_f64();
                 let ease_out = 1.0 - (1.0 - t).powi(3);
-                
+
                 // Interpolate zoom in log space for perceptually linear zoom
                 let log_start = self.zoom_start.ln();
                 let log_target = self.target_zoom.ln();
                 let log_current = log_start + (log_target - log_start) * ease_out;
                 let new_zoom = log_current.exp().clamp(MIN_ZOOM, MAX_ZOOM);
-                
+
                 // Apply zoom while keeping anchor point fixed
                 self.viewport.zoom = new_zoom;
-                
+
                 // Adjust center to keep the image anchor under the screen anchor
                 // screen_dx = where we want it - where it actually is
                 // positive dx means image drifted left, need to pan right (positive)
-                let new_screen_pos = self.viewport.image_to_screen(
-                    self.zoom_anchor_image.x, 
-                    self.zoom_anchor_image.y
-                );
+                let new_screen_pos = self
+                    .viewport
+                    .image_to_screen(self.zoom_anchor_image.x, self.zoom_anchor_image.y);
                 let screen_dx = self.zoom_anchor_screen.x - new_screen_pos.x;
                 let screen_dy = self.zoom_anchor_screen.y - new_screen_pos.y;
                 self.viewport.pan(screen_dx, screen_dy);
-                
+
                 is_animating = true;
                 trace!("Zoom animation: t={:.2}, zoom={:.4}", t, new_zoom);
             } else {
                 // Animation complete - snap to target
                 self.viewport.zoom = self.target_zoom;
-                
+
                 // Final adjustment to keep anchor point
-                let new_screen_pos = self.viewport.image_to_screen(
-                    self.zoom_anchor_image.x, 
-                    self.zoom_anchor_image.y
-                );
+                let new_screen_pos = self
+                    .viewport
+                    .image_to_screen(self.zoom_anchor_image.x, self.zoom_anchor_image.y);
                 let screen_dx = self.zoom_anchor_screen.x - new_screen_pos.x;
                 let screen_dy = self.zoom_anchor_screen.y - new_screen_pos.y;
                 self.viewport.pan(screen_dx, screen_dy);
-                
+
                 self.zoom_start_time = None;
             }
         }
@@ -417,7 +428,7 @@ impl ViewportState {
     pub fn zoom_at(&mut self, factor: f64, screen_x: f64, screen_y: f64) {
         // Calculate new target zoom
         let new_target = (self.target_zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-        
+
         // If already animating, update the target but keep the same anchor
         // If not animating, start a new animation
         if self.zoom_start_time.is_none() {
@@ -429,13 +440,12 @@ impl ViewportState {
             // Update start to current animated position for smooth chaining
             self.zoom_start = self.viewport.zoom;
             // Keep the same screen anchor but update image anchor for current zoom
-            self.zoom_anchor_image = self.viewport.screen_to_image(
-                self.zoom_anchor_screen.x, 
-                self.zoom_anchor_screen.y
-            );
+            self.zoom_anchor_image = self
+                .viewport
+                .screen_to_image(self.zoom_anchor_screen.x, self.zoom_anchor_screen.y);
             self.zoom_start_time = Some(Instant::now());
         }
-        
+
         self.target_zoom = new_target;
         trace!("Zoom requested: factor={}, target={}", factor, new_target);
     }
@@ -510,10 +520,10 @@ mod tests {
 
         // Get initial image position under cursor
         let before = viewport.screen_to_image(200.0, 150.0);
-        
+
         // Zoom in
         viewport.zoom_at(2.0, 200.0, 150.0);
-        
+
         // Position under cursor should be preserved
         let after = viewport.screen_to_image(200.0, 150.0);
         assert!((before.x - after.x).abs() < 1.0);
@@ -537,10 +547,10 @@ mod tests {
     fn test_pan_with_margin() {
         let mut viewport = Viewport::new(800.0, 600.0, 1000.0, 1000.0);
         viewport.zoom = 1.0;
-        
+
         // Pan way past the edge
         viewport.pan(-10000.0, -10000.0);
-        
+
         // Should be clamped within margin
         let margin_x = viewport.image_width * PAN_MARGIN_RATIO;
         let margin_y = viewport.image_height * PAN_MARGIN_RATIO;

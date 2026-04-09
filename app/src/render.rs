@@ -57,23 +57,37 @@ pub struct TrilinearLevels {
 /// Calculate the two mip levels to blend for trilinear filtering
 pub fn calculate_trilinear_levels(wsi: &WsiFile, target_downsample: f64) -> TrilinearLevels {
     let level_count = wsi.level_count();
-    
+
     if level_count == 0 {
-        return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 };
+        return TrilinearLevels {
+            level_fine: 0,
+            level_coarse: 0,
+            blend: 0.0,
+        };
     }
-    
+
     if level_count == 1 {
-        return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 };
+        return TrilinearLevels {
+            level_fine: 0,
+            level_coarse: 0,
+            blend: 0.0,
+        };
     }
-    
+
     // Find the best level (where pixel density is closest to 1:1)
     let best_level = wsi.best_level_for_downsample(target_downsample);
-    
+
     let best_info = match wsi.level(best_level) {
         Some(info) => info,
-        None => return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 },
+        None => {
+            return TrilinearLevels {
+                level_fine: 0,
+                level_coarse: 0,
+                blend: 0.0,
+            };
+        }
     };
-    
+
     // Determine if we should blend with the next finer or coarser level
     // If target_downsample > best_level's downsample, we're between best and next coarser
     // If target_downsample < best_level's downsample, we're between best and next finer
@@ -83,7 +97,11 @@ pub fn calculate_trilinear_levels(wsi: &WsiFile, target_downsample: f64) -> Tril
             (best_level, best_level + 1)
         } else {
             // At coarsest level, no blending
-            return TrilinearLevels { level_fine: best_level, level_coarse: best_level, blend: 0.0 };
+            return TrilinearLevels {
+                level_fine: best_level,
+                level_coarse: best_level,
+                blend: 0.0,
+            };
         }
     } else {
         // Blend between previous finer level and best (coarse)
@@ -91,31 +109,45 @@ pub fn calculate_trilinear_levels(wsi: &WsiFile, target_downsample: f64) -> Tril
             (best_level - 1, best_level)
         } else {
             // At finest level, no blending
-            return TrilinearLevels { level_fine: 0, level_coarse: 0, blend: 0.0 };
+            return TrilinearLevels {
+                level_fine: 0,
+                level_coarse: 0,
+                blend: 0.0,
+            };
         }
     };
-    
+
     // Calculate blend factor using log space for perceptually linear transitions
     let fine_info = wsi.level(level_fine);
     let coarse_info = wsi.level(level_coarse);
-    
+
     let (fine_ds, coarse_ds) = match (fine_info, coarse_info) {
         (Some(f), Some(c)) => (f.downsample, c.downsample),
-        _ => return TrilinearLevels { level_fine, level_coarse, blend: 0.0 },
+        _ => {
+            return TrilinearLevels {
+                level_fine,
+                level_coarse,
+                blend: 0.0,
+            };
+        }
     };
-    
+
     // Log-space interpolation for smooth transitions
     let log_target = target_downsample.ln();
     let log_fine = fine_ds.ln();
     let log_coarse = coarse_ds.ln();
-    
+
     let blend = if (log_coarse - log_fine).abs() < 0.001 {
         0.0
     } else {
         ((log_target - log_fine) / (log_coarse - log_fine)).clamp(0.0, 1.0)
     };
-    
-    TrilinearLevels { level_fine, level_coarse, blend }
+
+    TrilinearLevels {
+        level_fine,
+        level_coarse,
+        blend,
+    }
 }
 
 /// Render statistics for performance monitoring
@@ -150,20 +182,20 @@ pub fn visible_tile_range(
 ) -> Option<TileRange> {
     let level_info = wsi.level(level)?;
     let bounds = viewport.bounds();
-    
+
     // Convert viewport bounds to level coordinates
     let level_left = bounds.left / level_info.downsample;
     let level_top = bounds.top / level_info.downsample;
     let level_right = bounds.right / level_info.downsample;
     let level_bottom = bounds.bottom / level_info.downsample;
-    
+
     // Calculate tile indices
     let ts = tile_size as f64;
     let start_x = ((level_left / ts).floor() as i64 - 1).max(0) as u64;
     let start_y = ((level_top / ts).floor() as i64 - 1).max(0) as u64;
     let end_x = ((level_right / ts).ceil() as u64 + 1).min(level_info.tiles_x(tile_size));
     let end_y = ((level_bottom / ts).ceil() as u64 + 1).min(level_info.tiles_y(tile_size));
-    
+
     Some(TileRange {
         level,
         start_x,
@@ -202,21 +234,15 @@ impl TileRange {
 
 /// Bilinear interpolation for pixel sampling
 #[allow(dead_code)]
-pub fn bilinear_sample(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    x: f64,
-    y: f64,
-) -> [u8; 4] {
+pub fn bilinear_sample(data: &[u8], width: u32, height: u32, x: f64, y: f64) -> [u8; 4] {
     let x0 = x.floor() as u32;
     let y0 = y.floor() as u32;
     let x1 = (x0 + 1).min(width - 1);
     let y1 = (y0 + 1).min(height - 1);
-    
+
     let fx = x - x0 as f64;
     let fy = y - y0 as f64;
-    
+
     let get_pixel = |px: u32, py: u32| -> [f64; 4] {
         let idx = ((py * width + px) * 4) as usize;
         if idx + 3 < data.len() {
@@ -230,18 +256,18 @@ pub fn bilinear_sample(
             [0.0, 0.0, 0.0, 255.0]
         }
     };
-    
+
     let p00 = get_pixel(x0, y0);
     let p10 = get_pixel(x1, y0);
     let p01 = get_pixel(x0, y1);
     let p11 = get_pixel(x1, y1);
-    
+
     let mut result = [0u8; 4];
     for i in 0..4 {
         let top = p00[i] * (1.0 - fx) + p10[i] * fx;
         let bottom = p01[i] * (1.0 - fx) + p11[i] * fx;
         result[i] = (top * (1.0 - fy) + bottom * fy).clamp(0.0, 255.0) as u8;
     }
-    
+
     result
 }

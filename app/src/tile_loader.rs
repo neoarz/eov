@@ -4,11 +4,11 @@
 //! requests for tiles that are no longer visible.
 
 use common::{TileCache, TileCoord, TileData, TileManager, WsiFile};
-use crossbeam_channel::{bounded, Sender, Receiver, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use tracing::trace;
 
@@ -54,9 +54,9 @@ impl TileLoader {
         let pending_count = Arc::new(AtomicUsize::new(0));
         let loaded_epoch = Arc::new(AtomicU64::new(0));
         let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        
+
         let mut workers = Vec::with_capacity(WORKER_COUNT);
-        
+
         for i in 0..WORKER_COUNT {
             let request_rx = request_rx.clone();
             let tile_manager = Arc::clone(&tile_manager);
@@ -68,7 +68,7 @@ impl TileLoader {
             let pending_count = Arc::clone(&pending_count);
             let loaded_epoch = Arc::clone(&loaded_epoch);
             let shutdown = Arc::clone(&shutdown);
-            
+
             let handle = thread::spawn(move || {
                 let tile_manager = match WsiFile::open(&worker_path) {
                     Ok(worker_wsi) => Arc::new(TileManager::new(worker_wsi)),
@@ -88,10 +88,10 @@ impl TileLoader {
                     shutdown,
                 );
             });
-            
+
             workers.push(handle);
         }
-        
+
         Self {
             request_tx,
             failed,
@@ -104,24 +104,26 @@ impl TileLoader {
             cache,
         }
     }
-    
+
     /// Update the set of wanted tiles for this frame
     /// Sends tiles to workers, skipping those already cached or failed
     pub fn set_wanted_tiles(&self, tiles: Vec<TileCoord>) {
         // Bump generation to invalidate any stale in-flight requests
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         if generation.is_multiple_of(32) {
-            self.failed.lock().retain(|_, retry_generation| *retry_generation >= generation);
+            self.failed
+                .lock()
+                .retain(|_, retry_generation| *retry_generation >= generation);
         }
-        
+
         let mut sent = 0;
-        
+
         // Send tiles to workers (limited to avoid flooding)
         for coord in tiles {
             if sent >= MAX_TILES_PER_FRAME {
                 break;
             }
-            
+
             // Skip if already cached
             if self.cache.contains(&coord) {
                 continue;
@@ -146,7 +148,7 @@ impl TileLoader {
                 }
                 pending.insert(coord);
             }
-            
+
             // Try to send to workers (non-blocking)
             match self.request_tx.try_send(coord) {
                 Ok(_) => sent += 1,
@@ -163,7 +165,7 @@ impl TileLoader {
             self.pending_count.fetch_add(1, Ordering::Relaxed);
         }
     }
-    
+
     /// Clear failed tiles set (call when view changes significantly)
     #[allow(dead_code)]
     pub fn clear_failed(&self) {
@@ -205,7 +207,7 @@ fn worker_loop(
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
     trace!("Tile loader worker {} starting", id);
-    
+
     while !shutdown.load(Ordering::Relaxed) {
         // Wait for a tile request with timeout
         let coord = match request_rx.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -213,14 +215,14 @@ fn worker_loop(
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
-        
+
         // Skip if already in cache
         if cache.contains(&coord) {
             pending.lock().remove(&coord);
             pending_count.fetch_sub(1, Ordering::Relaxed);
             continue;
         }
-        
+
         // Load the tile
         match tile_manager.load_tile_sync(coord) {
             Ok(tile) => {
@@ -230,7 +232,8 @@ fn worker_loop(
             }
             Err(e) => {
                 trace!("Worker {} failed to load tile {:?}: {}", id, coord, e);
-                let retry_generation = generation.load(Ordering::Relaxed) + FAILED_RETRY_GENERATIONS;
+                let retry_generation =
+                    generation.load(Ordering::Relaxed) + FAILED_RETRY_GENERATIONS;
                 failed.lock().insert(coord, retry_generation);
             }
         }
@@ -238,12 +241,12 @@ fn worker_loop(
         pending.lock().remove(&coord);
         pending_count.fetch_sub(1, Ordering::Relaxed);
     }
-    
+
     trace!("Tile loader worker {} shutting down", id);
 }
 
 /// Find the best fallback tile for a given target tile coordinate
-/// 
+///
 /// This searches lower-resolution (higher mip) levels for a tile that covers
 /// the same area as the target tile. Returns the covering tile if found in cache.
 #[allow(dead_code)]
@@ -254,34 +257,34 @@ pub fn find_fallback_tile(
     tile_size: u32,
 ) -> Option<(Arc<TileData>, u32)> {
     let level_count = wsi.level_count();
-    
+
     // Get target tile's position in level-0 (image) coordinates
     let target_level_info = wsi.level(target.level)?;
     let target_image_x = target.x as f64 * tile_size as f64 * target_level_info.downsample;
     let target_image_y = target.y as f64 * tile_size as f64 * target_level_info.downsample;
-    
+
     // Search lower-resolution levels (higher indices = lower resolution)
     for fallback_level in (target.level + 1)..level_count {
         let fallback_level_info = wsi.level(fallback_level)?;
-        
+
         // Calculate which tile at the fallback level contains this image position
         // Each fallback tile covers (tile_size * downsample) pixels in image coordinates
         let fallback_tile_image_size = tile_size as f64 * fallback_level_info.downsample;
         let fallback_x = (target_image_x / fallback_tile_image_size).floor() as u64;
         let fallback_y = (target_image_y / fallback_tile_image_size).floor() as u64;
-        
+
         let fallback_coord = TileCoord::new(
             fallback_level,
             fallback_x,
             fallback_y,
             wsi.tile_size_for_level(fallback_level),
         );
-        
+
         if let Some(tile) = cache.get(&fallback_coord) {
             return Some((tile, fallback_level));
         }
     }
-    
+
     None
 }
 
@@ -307,26 +310,26 @@ pub fn calculate_fallback_region(
 ) -> Option<FallbackRegion> {
     let target_level_info = wsi.level(target.level)?;
     let fallback_level_info = wsi.level(fallback_level)?;
-    
+
     // Get target tile's position in level-0 (image) coordinates
     let target_image_x = target.x as f64 * tile_size as f64 * target_level_info.downsample;
     let target_image_y = target.y as f64 * tile_size as f64 * target_level_info.downsample;
     let target_image_w = tile_size as f64 * target_level_info.downsample;
     let target_image_h = tile_size as f64 * target_level_info.downsample;
-    
+
     // Calculate the fallback tile's position in image coordinates
     let fallback_tile_image_size = tile_size as f64 * fallback_level_info.downsample;
     let fallback_x = (target_image_x / fallback_tile_image_size).floor() as u64;
     let fallback_y = (target_image_y / fallback_tile_image_size).floor() as u64;
     let fallback_image_x = fallback_x as f64 * fallback_tile_image_size;
     let fallback_image_y = fallback_y as f64 * fallback_tile_image_size;
-    
+
     // Calculate the fractional position within the fallback tile (0.0-1.0)
     let frac_x = (target_image_x - fallback_image_x) / fallback_tile_image_size;
     let frac_y = (target_image_y - fallback_image_y) / fallback_tile_image_size;
     let frac_w = (target_image_w / fallback_tile_image_size).min(1.0 - frac_x);
     let frac_h = (target_image_h / fallback_tile_image_size).min(1.0 - frac_y);
-    
+
     Some(FallbackRegion {
         src_x: frac_x,
         src_y: frac_y,
@@ -362,7 +365,7 @@ pub fn calculate_wanted_tiles(
             da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
         });
     };
-    
+
     // FIRST: Add current level tiles - these are the primary display tiles
     // Prioritize these over fallbacks so user sees sharp content ASAP
     let mut visible = tile_manager.visible_tiles_with_margin(
@@ -377,7 +380,7 @@ pub fn calculate_wanted_tiles(
         sort_by_center(&mut visible, level_info.downsample);
     }
     wanted.extend(visible.iter().take(500).copied());
-    
+
     // THEN: Add lower-resolution tiles for fallback display (while high-res loads)
     // These provide quick visual feedback but are lower priority
     for fallback_level in (level + 1)..level_count {
@@ -392,13 +395,14 @@ pub fn calculate_wanted_tiles(
         if let Some(level_info) = tile_manager.wsi().level(fallback_level) {
             sort_by_center(&mut fallback_tiles, level_info.downsample);
         }
-        
+
         // Closer levels (smaller fallback_level - level) get more tiles loaded
         // as they provide better fallback quality
         let priority_boost = level_count.saturating_sub(fallback_level);
-        let tiles_at_this_level = (fallback_tiles.len().min(20) + priority_boost as usize * 10).min(50);
+        let tiles_at_this_level =
+            (fallback_tiles.len().min(20) + priority_boost as usize * 10).min(50);
         wanted.extend(fallback_tiles.iter().take(tiles_at_this_level).copied());
     }
-    
+
     wanted
 }
