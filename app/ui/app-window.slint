@@ -639,6 +639,7 @@ component Viewport inherits Rectangle {
     callback tool-mouse-move(float, float);
     callback tool-mouse-up(float, float);
     callback cancel-tool();
+    callback close-tab();
     
     // Export viewport dimensions for rendering
     out property <length> viewport-width: self.width;
@@ -952,6 +953,10 @@ component Viewport inherits Rectangle {
         width: 0px;
         height: 0px;
         key-pressed(e) => {
+            if e.text == "w" && e.modifiers.control {
+                root.close-tab();
+                return accept;
+            }
             if e.text == "f" || e.text == "F" {
                 root.fit-to-view();
                 return accept;
@@ -992,15 +997,6 @@ component HomeScreen inherits Rectangle {
             }
             
             Rectangle { height: 16px; }
-            
-            // App title
-            Text {
-                text: "EosMol";
-                color: Theme.text-primary;
-                font-size: 28px;
-                font-weight: 600;
-                horizontal-alignment: center;
-            }
             
             // Subtitle
             Text {
@@ -1191,6 +1187,7 @@ component SplitPaneContainer inherits Rectangle {
     callback tool-mouse-move(float, float);
     callback tool-mouse-up(float, float);
     callback cancel-tool();
+    callback close-active-tab();
     
     background: Theme.background;
     
@@ -1251,6 +1248,7 @@ component SplitPaneContainer inherits Rectangle {
                         tool-mouse-move(x, y) => { root.tool-mouse-move(x, y); }
                         tool-mouse-up(x, y) => { root.tool-mouse-up(x, y); }
                         cancel-tool => { root.cancel-tool(); }
+                        close-tab => { root.close-active-tab(); }
                     }
                 }
             }
@@ -1331,6 +1329,7 @@ component SplitPaneContainer inherits Rectangle {
                         tool-mouse-move(x, y) => { root.tool-mouse-move(x, y); }
                         tool-mouse-up(x, y) => { root.tool-mouse-up(x, y); }
                         cancel-tool => { root.cancel-tool(); }
+                        close-tab => { root.close-active-tab(); }
                     }
                 }
             }
@@ -1386,12 +1385,15 @@ component SplitPaneContainer inherits Rectangle {
 // ============ Main Application Window ============
 
 export component AppWindow inherits Window {
-    title: "EosMol WSI Viewer";
+    title: "eosmol";
+    no-frame: true;
+    resize-border-width: 5px;
     min-width: 800px;
     min-height: 600px;
     preferred-width: 1280px;
     preferred-height: 800px;
     background: Theme.background;
+    forward-focus: global-keys;
     
     // Properties
     in-out property <[TabData]> primary-tabs: [];
@@ -1479,15 +1481,43 @@ export component AppWindow inherits Window {
     callback render-backend-selected(RenderMode);
     callback move-tab-to-pane(int, int, int);
     callback zoom-slider-changed(int, float);
+    callback close-active-tab();
+    callback window-minimize();
+    callback window-maximize();
+    callback window-close();
+    callback window-drag(float, float);
     
     // Main layout
     VerticalLayout {
-        // Toolbar
+        // Toolbar (also serves as custom title bar)
         Rectangle {
             height: 40px;
             background: Theme.toolbar-bg;
             border-width: 0px;
-            
+
+            // Window drag area (behind everything, covers full toolbar)
+            toolbar-drag := TouchArea {
+                width: 100%;
+                height: 100%;
+
+                property <length> press-x;
+                property <length> press-y;
+
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                        self.press-x = self.mouse-x;
+                        self.press-y = self.mouse-y;
+                    }
+                    if e.kind == PointerEventKind.move && self.pressed {
+                        root.window-drag((self.mouse-x - self.press-x) / 1px, (self.mouse-y - self.press-y) / 1px);
+                    }
+                }
+
+                double-clicked => {
+                    root.window-maximize();
+                }
+            }
+
             HorizontalLayout {
                 padding: 4px;
                 spacing: 4px;
@@ -1552,16 +1582,77 @@ export component AppWindow inherits Window {
                     }
                 }
                 
-                // Spacer
+                // Left spacer
                 Rectangle { horizontal-stretch: 1; }
                 
-                // App title on right side
+                // Centered app title
                 Text {
-                    text: "EosMol";
+                    text: "eosmol";
                     color: Theme.text-secondary;
                     font-size: 12px;
                     font-weight: 600;
                     vertical-alignment: center;
+                }
+
+                // Right spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // Window action buttons
+                Rectangle {
+                    width: 46px;
+                    height: 32px;
+                    background: minimize-touch.has-hover ? Theme.surface-hover : transparent;
+                    border-radius: 0px;
+
+                    minimize-touch := TouchArea {
+                        clicked => { root.window-minimize(); }
+                    }
+
+                    Text {
+                        text: "─";
+                        color: Theme.text-primary;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    width: 46px;
+                    height: 32px;
+                    background: maximize-touch.has-hover ? Theme.surface-hover : transparent;
+                    border-radius: 0px;
+
+                    maximize-touch := TouchArea {
+                        clicked => { root.window-maximize(); }
+                    }
+
+                    Text {
+                        text: "☐";
+                        color: Theme.text-primary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle {
+                    width: 46px;
+                    height: 32px;
+                    background: close-win-touch.has-hover ? #e81123 : transparent;
+                    border-radius: 0px;
+
+                    close-win-touch := TouchArea {
+                        clicked => { root.window-close(); }
+                    }
+
+                    Text {
+                        text: "✕";
+                        color: close-win-touch.has-hover ? white : Theme.text-primary;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -1651,6 +1742,7 @@ export component AppWindow inherits Window {
                 tool-mouse-move(x, y) => { root.viewport-tool-mouse-move(x, y); }
                 tool-mouse-up(x, y) => { root.viewport-tool-mouse-up(x, y); }
                 cancel-tool => { root.cancel-tool(); }
+                close-active-tab => { root.close-active-tab(); }
             }
             
             // Empty state - show home screen when no tabs
@@ -1687,6 +1779,20 @@ export component AppWindow inherits Window {
             } else if id == "split-right" {
                 root.split-right(root.drag-source-pane, root.context-menu-tab-id);
             }
+        }
+    }
+
+    // Global keyboard handler for window-level shortcuts
+    global-keys := FocusScope {
+        width: 0px;
+        height: 0px;
+
+        key-pressed(e) => {
+            if e.text == "w" && e.modifiers.control {
+                root.close-active-tab();
+                return accept;
+            }
+            return reject;
         }
     }
 }

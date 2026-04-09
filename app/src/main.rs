@@ -1014,6 +1014,80 @@ fn setup_callbacks(
             }
         });
     }
+
+    // Close active tab (Ctrl+W)
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_close_active_tab(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                {
+                    let mut state = state_handle.write();
+                    let pane = state.focused_pane;
+                    if let Some(active_id) = state.active_tab_id_for_pane(pane) {
+                        state.close_tab_in_pane(pane, active_id);
+                    }
+                }
+                let state = state_handle.read();
+                update_tabs(&ui, &state);
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    // Window minimize
+    {
+        let ui_weak = ui_weak.clone();
+
+        ui.on_window_minimize(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.window().set_minimized(true);
+            }
+        });
+    }
+
+    // Window maximize/restore
+    {
+        let ui_weak = ui_weak.clone();
+
+        ui.on_window_maximize(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let maximized = ui.window().is_maximized();
+                ui.window().set_maximized(!maximized);
+            }
+        });
+    }
+
+    // Window close
+    {
+        let ui_weak = ui_weak.clone();
+
+        ui.on_window_close(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let _ = ui.hide();
+            }
+        });
+    }
+
+    // Window drag (custom title bar)
+    {
+        let ui_weak = ui_weak.clone();
+
+        ui.on_window_drag(move |dx, dy| {
+            if let Some(ui) = ui_weak.upgrade() {
+                let pos = ui.window().position();
+                let scale = ui.window().scale_factor();
+                let new_x = pos.x + (dx * scale) as i32;
+                let new_y = pos.y + (dy * scale) as i32;
+                ui.window().set_position(slint::PhysicalPosition::new(new_x, new_y));
+            }
+        });
+    }
 }
 
 fn open_file(

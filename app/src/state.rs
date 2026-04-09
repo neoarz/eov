@@ -558,13 +558,22 @@ impl AppState {
         self.needs_render = true;
     }
     
-    /// Create a new home tab and return its ID
+    /// Create a new home tab and return its ID.
+    /// If the pane already has a home tab, switch to it instead.
     pub fn create_home_tab(&mut self) -> i32 {
         let pane = if self.split_enabled {
             self.focused_pane
         } else {
             PaneId::Primary
         };
+        // If the pane already contains a home tab, just activate it
+        let tabs = self.tabs_for_pane(pane);
+        for &tab_id in tabs {
+            if self.is_home_tab(tab_id) {
+                self.activate_tab_in_pane(pane, tab_id);
+                return tab_id;
+            }
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.home_tabs.push(id);
