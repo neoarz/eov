@@ -1986,6 +1986,8 @@ fn coarse_blend_for_tile(
     fine_coord: common::TileCoord,
     fine_tile: &Arc<common::TileData>,
 ) -> Option<(Arc<common::TileData>, [f32; 2], [f32; 2], f32)> {
+    const COARSE_BOUNDARY_EPSILON: f64 = 1e-3;
+
     if trilinear.level_fine == trilinear.level_coarse || trilinear.blend <= 0.01 {
         return None;
     }
@@ -1996,13 +1998,28 @@ fn coarse_blend_for_tile(
     let fine_image_w = fine_tile.width as f64 * fine_downsample;
     let fine_image_h = fine_tile.height as f64 * fine_downsample;
     let coarse_tile_size = file.tile_manager.tile_size_for_level(trilinear.level_coarse) as f64;
+    let image_x_end = image_x + fine_image_w;
+    let image_y_end = image_y + fine_image_h;
 
     let coarse_tile_x = image_x / coarse_info.downsample;
     let coarse_tile_y = image_y / coarse_info.downsample;
+    let coarse_tile_x_end = ((image_x_end - COARSE_BOUNDARY_EPSILON) / coarse_info.downsample).max(coarse_tile_x);
+    let coarse_tile_y_end = ((image_y_end - COARSE_BOUNDARY_EPSILON) / coarse_info.downsample).max(coarse_tile_y);
+    let coarse_start_tile_x = (coarse_tile_x / coarse_tile_size).floor().max(0.0) as u64;
+    let coarse_start_tile_y = (coarse_tile_y / coarse_tile_size).floor().max(0.0) as u64;
+    let coarse_end_tile_x = (coarse_tile_x_end / coarse_tile_size).floor().max(0.0) as u64;
+    let coarse_end_tile_y = (coarse_tile_y_end / coarse_tile_size).floor().max(0.0) as u64;
+
+    // A single coarse tile is only valid when it fully covers the fine tile's footprint.
+    // Clamping a cross-boundary sample region collapses it into a repeated source row/column.
+    if coarse_start_tile_x != coarse_end_tile_x || coarse_start_tile_y != coarse_end_tile_y {
+        return None;
+    }
+
     let coarse_coord = common::TileCoord::new(
         trilinear.level_coarse,
-        (coarse_tile_x / coarse_tile_size).floor().max(0.0) as u64,
-        (coarse_tile_y / coarse_tile_size).floor().max(0.0) as u64,
+        coarse_start_tile_x,
+        coarse_start_tile_y,
         coarse_tile_size as u32,
     );
 
@@ -2013,10 +2030,14 @@ fn coarse_blend_for_tile(
     let coarse_src_y = (coarse_tile_y - coarse_origin_y).max(0.0);
     let coarse_src_w = (fine_image_w / coarse_info.downsample).max(0.0);
     let coarse_src_h = (fine_image_h / coarse_info.downsample).max(0.0);
-    let coarse_src_x_end = (coarse_src_x + coarse_src_w).min(coarse_tile.width as f64);
-    let coarse_src_y_end = (coarse_src_y + coarse_src_h).min(coarse_tile.height as f64);
+    let coarse_src_x_end = coarse_src_x + coarse_src_w;
+    let coarse_src_y_end = coarse_src_y + coarse_src_h;
 
-    if coarse_src_x_end <= coarse_src_x || coarse_src_y_end <= coarse_src_y {
+    if coarse_src_x_end <= coarse_src_x
+        || coarse_src_y_end <= coarse_src_y
+        || coarse_src_x_end > coarse_tile.width as f64 + COARSE_BOUNDARY_EPSILON
+        || coarse_src_y_end > coarse_tile.height as f64 + COARSE_BOUNDARY_EPSILON
+    {
         return None;
     }
 
