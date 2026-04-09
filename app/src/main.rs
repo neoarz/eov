@@ -6,11 +6,11 @@ mod render;
 mod tile_loader;
 
 use anyhow::Result;
-use common::{TileCache, TileManager, ViewportState, WsiFile};
+use common::{TileCache, TileManager, Viewport, ViewportState, WsiFile};
 use parking_lot::RwLock;
 use rfd::FileDialog;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
-use state::{AppState, OpenFile, PaneId, RenderBackend};
+use state::{AppState, OpenFile, PaneId, RenderBackend, TileRequestSignature};
 use tile_loader::{TileLoader, calculate_wanted_tiles};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -1092,6 +1092,35 @@ fn update_render_backend(ui: &AppWindow, state: &AppState) {
     ui.set_gpu_rendering_available(state.gpu_backend_available);
 }
 
+fn tile_request_signature(
+    tile_manager: &TileManager,
+    viewport: &Viewport,
+    level: u32,
+    margin_tiles: i32,
+) -> Option<TileRequestSignature> {
+    let level_info = tile_manager.wsi().level(level)?;
+    let bounds = viewport.bounds();
+    let tile_size = tile_manager.tile_size_for_level(level);
+    let tile_size_f64 = tile_size as f64;
+    let level_left = bounds.left / level_info.downsample;
+    let level_top = bounds.top / level_info.downsample;
+    let level_right = bounds.right / level_info.downsample;
+    let level_bottom = bounds.bottom / level_info.downsample;
+    let margin_tiles_i64 = margin_tiles.max(0) as i64;
+
+    Some(TileRequestSignature {
+        level,
+        margin_tiles,
+        start_x: ((level_left / tile_size_f64).floor() as i64 - margin_tiles_i64).max(0) as u64,
+        start_y: ((level_top / tile_size_f64).floor() as i64 - margin_tiles_i64).max(0) as u64,
+        end_x: ((level_right / tile_size_f64).ceil() as u64 + margin_tiles_i64 as u64)
+            .min(level_info.tiles_x(tile_size)),
+        end_y: ((level_bottom / tile_size_f64).ceil() as u64 + margin_tiles_i64 as u64)
+            .min(level_info.tiles_y(tile_size)),
+        tile_size,
+    })
+}
+
 fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: &Arc<TileCache>) -> bool {
     let mut state = state.write();
     let Some(file_id) = state.active_file_id else {
@@ -1114,7 +1143,7 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     // Check if we switched to a different file - need to force re-render
     let file_switched = state.last_rendered_file_id != Some(file_id);
     let mut keep_running = render_requested || file_switched;
-    let mut rendered_frame = render_requested;
+    let mut rendered_frame = false;
     
     {
         let Some(file) = state.open_files.iter_mut().find(|f| f.id == file_id) else {
@@ -1193,8 +1222,7 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     
     // Render primary viewport
     dbg_print!("[UPDATE] calling render");
-    render_viewport_to_buffer(ui, file, tile_cache, true);
-    rendered_frame = true;
+    rendered_frame |= render_viewport_to_buffer(ui, file, tile_cache, true);
     dbg_print!("[UPDATE] render done");
     
     // Update ROI overlay (must be done every frame for proper tracking)
@@ -1276,8 +1304,7 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
             });
             
             // Render secondary viewport
-            render_secondary_viewport(ui, file, tile_cache);
-            rendered_frame = true;
+            rendered_frame |= render_secondary_viewport(ui, file, tile_cache);
         }
     }
     } // End of file borrow scope
@@ -1295,7 +1322,7 @@ fn update_and_render(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: 
     keep_running
 }
 
-fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>, _is_primary: bool) {
+fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>, _is_primary: bool) -> bool {
     dbg_print!("[RENDER] start");
     let vp = &file.viewport.viewport;
     
@@ -1323,7 +1350,7 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     // Calculate trilinear levels for smooth mip transitions
     let trilinear = render::calculate_trilinear_levels(&file.wsi, vp.effective_downsample());
     let level = trilinear.level_fine; // Primary level for rendering
-    let tile_size = file.tile_manager.tile_size();
+    let tile_size = file.tile_manager.tile_size_for_level(level);
     let margin_tiles = if file.viewport.is_moving() { 1 } else { 0 };
     
     // Check if level changed - must reset tile tracking and force re-render
@@ -1386,37 +1413,24 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     trace!("render: cached fine={} coarse={} new_tiles={}", cached_count, cached_coarse_tiles.len(), new_tiles_loaded);
     
-    // Update wanted tiles for background loading (always do this)
-    // Include both fine and coarse levels for trilinear
-    let mut wanted = calculate_wanted_tiles(
-        &file.tile_manager,
-        level,
-        bounds.left,
-        bounds.top,
-        bounds.right,
-        bounds.bottom,
-        margin_tiles,
-    );
-    
-    // Add coarse level tiles to wanted list for trilinear blending
-    if trilinear.level_fine != trilinear.level_coarse && trilinear.blend > 0.01 {
-        let coarse_wanted = calculate_wanted_tiles(
-            &file.tile_manager,
-            trilinear.level_coarse,
-            bounds.left,
-            bounds.top,
-            bounds.right,
-            bounds.bottom,
-            margin_tiles,
-        );
-        wanted.extend(coarse_wanted);
+    if let Some(signature) = tile_request_signature(&file.tile_manager, vp, level, margin_tiles) {
+        if file.last_primary_request != Some(signature) {
+            let wanted = calculate_wanted_tiles(
+                &file.tile_manager,
+                level,
+                bounds.left,
+                bounds.top,
+                bounds.right,
+                bounds.bottom,
+                margin_tiles,
+            );
+
+            trace!("render: wanted tiles={}", wanted.len());
+            file.tile_loader.set_wanted_tiles(wanted);
+            file.last_primary_request = Some(signature);
+            trace!("render: set_wanted_tiles done");
+        }
     }
-    
-    trace!("render: wanted tiles={}", wanted.len());
-    
-    file.tile_loader.set_wanted_tiles(wanted);
-    
-    trace!("render: set_wanted_tiles done");
     
     // Skip rendering if nothing changed
     // - Always render first frame
@@ -1425,7 +1439,7 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     // - Always render if new tiles loaded at current level
     if !is_first_frame && !viewport_changed && !level_changed && !new_tiles_loaded {
         trace!("render: skipping (no changes)");
-        return;
+        return false;
     }
     
     dbg_print!("[RENDER] proceeding with render");
@@ -1450,7 +1464,7 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     dbg_print!("[RENDER] buffer {}x{}", render_width, render_height);
     
     if render_width == 0 || render_height == 0 {
-        return;
+        return false;
     }
     
     let buffer_size = (render_width * render_height * 4) as usize;
@@ -1474,7 +1488,7 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     let level_info = match file.wsi.level(level) {
         Some(info) => info,
-        None => return,
+        None => return false,
     };
     dbg_print!("[RENDER] got level_info: downsample={}", level_info.downsample);
     
@@ -1511,8 +1525,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             };
             
             // Calculate image coordinates for this fallback tile
-            let fb_image_x = fb_coord.x as f64 * tile_size as f64 * fallback_level_info.downsample;
-            let fb_image_y = fb_coord.y as f64 * tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_x = fb_coord.x as f64 * fb_coord.tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_y = fb_coord.y as f64 * fb_coord.tile_size as f64 * fallback_level_info.downsample;
             let fb_image_x_end = fb_image_x + fallback_tile.width as f64 * fallback_level_info.downsample;
             let fb_image_y_end = fb_image_y + fallback_tile.height as f64 * fallback_level_info.downsample;
             
@@ -1565,8 +1579,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         
         // Calculate screen position based on image coordinates
         // Each tile at (coord.x, coord.y) covers [coord.x * tile_size * ds, (coord.x+1) * tile_size * ds) in image space
-        let image_x = coord.x as f64 * tile_size as f64 * level_info.downsample;
-        let image_y = coord.y as f64 * tile_size as f64 * level_info.downsample;
+        let image_x = coord.x as f64 * coord.tile_size as f64 * level_info.downsample;
+        let image_y = coord.y as f64 * coord.tile_size as f64 * level_info.downsample;
         let image_x_end = image_x + tile_data.width as f64 * level_info.downsample;
         let image_y_end = image_y + tile_data.height as f64 * level_info.downsample;
         
@@ -1607,8 +1621,8 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             
             if let Some((coarse_coord, coarse_data)) = coarse_tile {
                 // Calculate where within the coarse tile our fine region maps to
-                let coarse_tile_origin_x = coarse_coord.x as f64 * tile_size as f64;
-                let coarse_tile_origin_y = coarse_coord.y as f64 * tile_size as f64;
+                let coarse_tile_origin_x = coarse_coord.x as f64 * coarse_coord.tile_size as f64;
+                let coarse_tile_origin_y = coarse_coord.y as f64 * coarse_coord.tile_size as f64;
                 
                 // Source region within coarse tile
                 let coarse_src_x = coarse_tile_x - coarse_tile_origin_x;
@@ -1676,14 +1690,17 @@ fn render_viewport_to_buffer(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     if let Some(pixel_buffer) = create_image_buffer(buffer, render_width, render_height) {
         dbg_print!("[RENDER] updating UI");
         ui.set_viewport_content(Image::from_rgba8(pixel_buffer));
+        dbg_print!("[RENDER] done");
+        return true;
     }
     
     dbg_print!("[RENDER] done");
+    false
 }
 
-fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>) {
+fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &Arc<TileCache>) -> bool {
     let Some(ref secondary) = file.secondary_viewport else {
-        return;
+        return false;
     };
     
     let vp = &secondary.viewport;
@@ -1691,8 +1708,6 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     // Determine best level for current zoom
     let level = file.wsi.best_level_for_downsample(vp.effective_downsample());
-    let tile_size = file.tile_manager.tile_size();
-    
     // Get visible tiles using viewport bounds
     let bounds = vp.bounds();
     let visible_tiles = file.tile_manager.visible_tiles_with_margin(
@@ -1707,24 +1722,28 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     // Limit visible tiles to a reasonable maximum
     let visible_tiles: Vec<_> = visible_tiles.into_iter().take(500).collect();
     
-    // Update wanted tiles for background loading (secondary viewport)
-    let wanted = calculate_wanted_tiles(
-        &file.tile_manager,
-        level,
-        bounds.left,
-        bounds.top,
-        bounds.right,
-        bounds.bottom,
-        margin_tiles,
-    );
-    file.tile_loader.set_wanted_tiles(wanted);
+    if let Some(signature) = tile_request_signature(&file.tile_manager, vp, level, margin_tiles) {
+        if file.last_secondary_request != Some(signature) {
+            let wanted = calculate_wanted_tiles(
+                &file.tile_manager,
+                level,
+                bounds.left,
+                bounds.top,
+                bounds.right,
+                bounds.bottom,
+                margin_tiles,
+            );
+            file.tile_loader.set_wanted_tiles(wanted);
+            file.last_secondary_request = Some(signature);
+        }
+    }
     
     // Reuse persistent buffer for rendering (avoid per-frame allocation)
     let render_width = vp.width as u32;
     let render_height = vp.height.max(1.0) as u32;
     
     if render_width == 0 || render_height == 0 {
-        return;
+        return false;
     }
     
     let buffer_size = (render_width * render_height * 4) as usize;
@@ -1741,7 +1760,7 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     
     let level_info = match file.wsi.level(level) {
         Some(info) => info,
-        None => return,
+        None => return false,
     };
     
     let level_count = file.wsi.level_count();
@@ -1773,8 +1792,8 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
             };
             
             // Calculate image coordinates for this fallback tile
-            let fb_image_x = fb_coord.x as f64 * tile_size as f64 * fallback_level_info.downsample;
-            let fb_image_y = fb_coord.y as f64 * tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_x = fb_coord.x as f64 * fb_coord.tile_size as f64 * fallback_level_info.downsample;
+            let fb_image_y = fb_coord.y as f64 * fb_coord.tile_size as f64 * fallback_level_info.downsample;
             let fb_image_x_end = fb_image_x + fallback_tile.width as f64 * fallback_level_info.downsample;
             let fb_image_y_end = fb_image_y + fallback_tile.height as f64 * fallback_level_info.downsample;
             
@@ -1812,8 +1831,8 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
         };
         
         // Calculate image coordinates for this tile
-        let image_x = coord.x as f64 * tile_size as f64 * level_info.downsample;
-        let image_y = coord.y as f64 * tile_size as f64 * level_info.downsample;
+        let image_x = coord.x as f64 * coord.tile_size as f64 * level_info.downsample;
+        let image_y = coord.y as f64 * coord.tile_size as f64 * level_info.downsample;
         let image_x_end = image_x + tile_data.width as f64 * level_info.downsample;
         let image_y_end = image_y + tile_data.height as f64 * level_info.downsample;
         
@@ -1842,7 +1861,10 @@ fn render_secondary_viewport(ui: &AppWindow, file: &mut OpenFile, tile_cache: &A
     // Create image from buffer
     if let Some(pixel_buffer) = create_image_buffer(buffer, render_width, render_height) {
         ui.set_secondary_viewport_content(Image::from_rgba8(pixel_buffer));
+        return true;
     }
+
+    false
 }
 
 /// Fast fill RGBA buffer with a single color using u32 writes

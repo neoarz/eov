@@ -93,6 +93,17 @@ pub struct Measurement {
     pub end: ImagePoint,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TileRequestSignature {
+    pub level: u32,
+    pub margin_tiles: i32,
+    pub start_x: u64,
+    pub start_y: u64,
+    pub end_x: u64,
+    pub end_y: u64,
+    pub tile_size: u32,
+}
+
 impl Measurement {
     /// Calculate distance in image pixels
     pub fn distance(&self) -> f64 {
@@ -157,6 +168,8 @@ pub struct OpenFile {
     pub last_render_time: std::time::Instant,
     /// Tile loader epoch observed by the primary viewport render path
     pub last_seen_tile_epoch: u64,
+    /// Last tile request signature submitted for the primary viewport
+    pub last_primary_request: Option<TileRequestSignature>,
     /// Last rendered secondary viewport state (for dirty checking)
     pub last_secondary_zoom: f64,
     pub last_secondary_center_x: f64,
@@ -165,6 +178,8 @@ pub struct OpenFile {
     pub last_secondary_height: f64,
     /// Tile loader epoch observed by the secondary viewport render path
     pub last_seen_secondary_tile_epoch: u64,
+    /// Last tile request signature submitted for the secondary viewport
+    pub last_secondary_request: Option<TileRequestSignature>,
     /// Reusable render buffer for secondary viewport
     pub secondary_render_buffer: Vec<u8>,
 }
@@ -408,12 +423,14 @@ impl AppState {
             frame_count: 0,
             last_render_time: std::time::Instant::now(),
             last_seen_tile_epoch: 0,
+            last_primary_request: None,
             last_secondary_zoom: 0.0,
             last_secondary_center_x: 0.0,
             last_secondary_center_y: 0.0,
             last_secondary_width: 0.0,
             last_secondary_height: 0.0,
             last_seen_secondary_tile_epoch: 0,
+            last_secondary_request: None,
             secondary_render_buffer: Vec::new(),
         });
 

@@ -6,7 +6,7 @@
 use common::{TileCache, TileCoord, TileData, TileManager, WsiFile};
 use crossbeam_channel::{bounded, Sender, Receiver, TrySendError};
 use parking_lot::Mutex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -18,12 +18,15 @@ const WORKER_COUNT: usize = 4;
 /// Maximum tiles to send to workers per frame
 const MAX_TILES_PER_FRAME: usize = 32;
 
+/// Number of wanted-tile generations to suppress immediately retrying a failed tile.
+const FAILED_RETRY_GENERATIONS: u64 = 12;
+
 /// Background tile loader with automatic cancellation of stale requests
 pub struct TileLoader {
     /// Channel to send tile requests to workers
     request_tx: Sender<TileCoord>,
-    /// Set of tiles that failed to load (to avoid repeated requests)
-    failed: Arc<Mutex<HashSet<TileCoord>>>,
+    /// Failed tiles are temporarily suppressed until their retry generation expires.
+    failed: Arc<Mutex<HashMap<TileCoord, u64>>>,
     /// Current generation - tiles from old generations are skipped
     generation: Arc<AtomicU64>,
     /// Tiles currently queued or loading, used to deduplicate work
@@ -45,7 +48,7 @@ impl TileLoader {
     pub fn new(tile_manager: Arc<TileManager>, cache: Arc<TileCache>) -> Self {
         // Bounded channel for tile requests - sized for good throughput
         let (request_tx, request_rx) = bounded::<TileCoord>(64);
-        let failed = Arc::new(Mutex::new(HashSet::new()));
+        let failed = Arc::new(Mutex::new(HashMap::new()));
         let generation = Arc::new(AtomicU64::new(0));
         let pending = Arc::new(Mutex::new(HashSet::new()));
         let pending_count = Arc::new(AtomicUsize::new(0));
@@ -60,6 +63,7 @@ impl TileLoader {
             let worker_path = tile_manager.wsi().properties().path.clone();
             let cache = Arc::clone(&cache);
             let failed = Arc::clone(&failed);
+            let generation = Arc::clone(&generation);
             let pending = Arc::clone(&pending);
             let pending_count = Arc::clone(&pending_count);
             let loaded_epoch = Arc::clone(&loaded_epoch);
@@ -77,6 +81,7 @@ impl TileLoader {
                     tile_manager,
                     cache,
                     failed,
+                    generation,
                     pending,
                     pending_count,
                     loaded_epoch,
@@ -104,7 +109,10 @@ impl TileLoader {
     /// Sends tiles to workers, skipping those already cached or failed
     pub fn set_wanted_tiles(&self, tiles: Vec<TileCoord>) {
         // Bump generation to invalidate any stale in-flight requests
-        self.generation.fetch_add(1, Ordering::SeqCst);
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        if generation % 32 == 0 {
+            self.failed.lock().retain(|_, retry_generation| *retry_generation >= generation);
+        }
         
         let mut sent = 0;
         
@@ -120,8 +128,14 @@ impl TileLoader {
             }
 
             // Skip if previously failed (brief lock)
-            if self.failed.lock().contains(&coord) {
-                continue;
+            {
+                let failed = self.failed.lock();
+                if failed
+                    .get(&coord)
+                    .is_some_and(|retry_generation| *retry_generation >= generation)
+                {
+                    continue;
+                }
             }
 
             // Skip if already queued or loading
@@ -181,7 +195,8 @@ fn worker_loop(
     request_rx: Receiver<TileCoord>,
     tile_manager: Arc<TileManager>,
     cache: Arc<TileCache>,
-    failed: Arc<Mutex<HashSet<TileCoord>>>,
+    failed: Arc<Mutex<HashMap<TileCoord, u64>>>,
+    generation: Arc<AtomicU64>,
     pending: Arc<Mutex<HashSet<TileCoord>>>,
     pending_count: Arc<AtomicUsize>,
     loaded_epoch: Arc<AtomicU64>,
@@ -213,7 +228,8 @@ fn worker_loop(
             }
             Err(e) => {
                 trace!("Worker {} failed to load tile {:?}: {}", id, coord, e);
-                failed.lock().insert(coord);
+                let retry_generation = generation.load(Ordering::Relaxed) + FAILED_RETRY_GENERATIONS;
+                failed.lock().insert(coord, retry_generation);
             }
         }
 
@@ -252,7 +268,12 @@ pub fn find_fallback_tile(
         let fallback_x = (target_image_x / fallback_tile_image_size).floor() as u64;
         let fallback_y = (target_image_y / fallback_tile_image_size).floor() as u64;
         
-        let fallback_coord = TileCoord::new(fallback_level, fallback_x, fallback_y);
+        let fallback_coord = TileCoord::new(
+            fallback_level,
+            fallback_x,
+            fallback_y,
+            wsi.tile_size_for_level(fallback_level),
+        );
         
         if let Some(tile) = cache.get(&fallback_coord) {
             return Some((tile, fallback_level));
@@ -326,7 +347,7 @@ pub fn calculate_wanted_tiles(
     let level_count = tile_manager.wsi().level_count();
     let center_x = (bounds_left + bounds_right) * 0.5;
     let center_y = (bounds_top + bounds_bottom) * 0.5;
-    let tile_size = tile_manager.tile_size() as f64;
+    let tile_size = tile_manager.tile_size_for_level(level) as f64;
 
     let sort_by_center = |tiles: &mut Vec<TileCoord>, downsample: f64| {
         tiles.sort_by(|a, b| {

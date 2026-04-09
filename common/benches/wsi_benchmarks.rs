@@ -5,7 +5,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use common::{WsiFile, TileManager, TileCoord, TileCache, Viewport};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 fn get_svs_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -72,7 +71,7 @@ fn bench_read_tiles(c: &mut Criterion) {
             &(level, 0u64, 0u64),
             |b, &(l, x, y)| {
                 b.iter(|| {
-                    manager.load_tile_sync(TileCoord::new(l, x, y)).unwrap()
+                    manager.load_tile_sync(TileCoord::new(l, x, y, manager.tile_size_for_level(l))).unwrap()
                 })
             }
         );
@@ -85,7 +84,7 @@ fn bench_read_tiles(c: &mut Criterion) {
             &(level, center_x, center_y),
             |b, &(l, x, y)| {
                 b.iter(|| {
-                    manager.load_tile_sync(TileCoord::new(l, x, y)).unwrap()
+                    manager.load_tile_sync(TileCoord::new(l, x, y, manager.tile_size_for_level(l))).unwrap()
                 })
             }
         );
@@ -96,7 +95,7 @@ fn bench_read_tiles(c: &mut Criterion) {
             &(level, max_x, max_y),
             |b, &(l, x, y)| {
                 b.iter(|| {
-                    manager.load_tile_sync(TileCoord::new(l, x, y)).unwrap()
+                    manager.load_tile_sync(TileCoord::new(l, x, y, manager.tile_size_for_level(l))).unwrap()
                 })
             }
         );
@@ -119,7 +118,7 @@ fn bench_batch_tiles(c: &mut Criterion) {
     
     // Simulate viewport: 1920x1080 at various zoom levels
     for level in 0..wsi.level_count().min(4) {
-        let tiles = manager.visible_tiles(level, 0.0, 0.0, 1920.0, 1080.0, 1.0);
+        let tiles = manager.visible_tiles(level, 0.0, 0.0, 1920.0, 1080.0);
         let tile_count = tiles.len().min(20); // Limit to keep benchmark reasonable
         let tiles: Vec<_> = tiles.into_iter().take(tile_count).collect();
         
@@ -148,13 +147,13 @@ fn bench_cache(c: &mut Criterion) {
     
     // Pre-populate cache
     for i in 0..100u64 {
-        let tile = common::TileData::placeholder(TileCoord::new(0, i, 0), 256);
+        let tile = common::TileData::placeholder(TileCoord::new(0, i, 0, 256), 256);
         cache.insert(tile);
     }
     
     // Benchmark cache hit
     group.bench_function("cache_hit", |b| {
-        let coord = TileCoord::new(0, 50, 0);
+        let coord = TileCoord::new(0, 50, 0, 256);
         b.iter(|| {
             cache.get(black_box(&coord))
         })
@@ -162,7 +161,7 @@ fn bench_cache(c: &mut Criterion) {
     
     // Benchmark cache miss
     group.bench_function("cache_miss", |b| {
-        let coord = TileCoord::new(0, 9999, 9999);
+        let coord = TileCoord::new(0, 9999, 9999, 256);
         b.iter(|| {
             cache.get(black_box(&coord))
         })
@@ -172,7 +171,7 @@ fn bench_cache(c: &mut Criterion) {
     group.bench_function("cache_insert", |b| {
         let mut i = 1000u64;
         b.iter(|| {
-            let tile = common::TileData::placeholder(TileCoord::new(0, i, 0), 256);
+            let tile = common::TileData::placeholder(TileCoord::new(0, i, 0, 256), 256);
             cache.insert(tile);
             i += 1;
         })
@@ -250,9 +249,8 @@ fn bench_visible_tiles(c: &mut Criterion) {
                     black_box(0),
                     black_box(x),
                     black_box(y),
-                    black_box(w),
-                    black_box(h),
-                    black_box(zoom),
+                    black_box(x + w / zoom),
+                    black_box(y + h / zoom),
                 )
             })
         });

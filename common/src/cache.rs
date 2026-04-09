@@ -19,6 +19,10 @@ pub const DEFAULT_CACHE_SIZE_BYTES: usize = 256 * 1024 * 1024;
 /// Default maximum number of tiles to cache
 pub const DEFAULT_MAX_TILES: usize = 2048;
 
+/// Evict to a softer target once limits are crossed to avoid trimming on every insert.
+const EVICTION_HEADROOM_BYTES: usize = 16 * 1024 * 1024;
+const EVICTION_HEADROOM_TILES: usize = 64;
+
 /// Cache entry with metadata
 #[derive(Clone)]
 struct CacheEntry {
@@ -212,9 +216,18 @@ impl TileCache {
             let mut coords = Vec::new();
             let mut projected_bytes = *bytes;
             let mut projected_count = self.cache.len();
+            let over_byte_limit = projected_bytes + required_bytes > self.max_bytes;
+            let over_tile_limit = projected_count >= self.max_tiles;
+
+            if !over_byte_limit && !over_tile_limit {
+                return;
+            }
+
+            let target_bytes = self.max_bytes.saturating_sub(EVICTION_HEADROOM_BYTES.min(self.max_bytes / 4));
+            let target_tiles = self.max_tiles.saturating_sub(EVICTION_HEADROOM_TILES.min(self.max_tiles / 8));
             
             // Collect coords to evict
-            while (projected_bytes + required_bytes > self.max_bytes || projected_count >= self.max_tiles)
+            while (projected_bytes + required_bytes > target_bytes || projected_count >= target_tiles)
                 && projected_count > 0
             {
                 if let Some((coord, _)) = lru.pop_lru() {
@@ -390,7 +403,7 @@ mod tests {
     #[test]
     fn test_cache_basic_operations() {
         let cache = TileCache::new();
-        let coord = TileCoord::new(0, 0, 0);
+        let coord = TileCoord::new(0, 0, 0, 256);
         let tile = TileData::placeholder(coord, 256);
 
         // Insert and retrieve
@@ -408,9 +421,9 @@ mod tests {
         let tile_size = 256 * 256 * 4; // ~256KB per tile
         let cache = TileCache::with_limits(2, tile_size * 2 + 1);
 
-        let tile1 = TileData::placeholder(TileCoord::new(0, 0, 0), 256);
-        let tile2 = TileData::placeholder(TileCoord::new(0, 1, 0), 256);
-        let tile3 = TileData::placeholder(TileCoord::new(0, 2, 0), 256);
+        let tile1 = TileData::placeholder(TileCoord::new(0, 0, 0, 256), 256);
+        let tile2 = TileData::placeholder(TileCoord::new(0, 1, 0, 256), 256);
+        let tile3 = TileData::placeholder(TileCoord::new(0, 2, 0, 256), 256);
 
         cache.insert(tile1);
         cache.insert(tile2);
@@ -424,7 +437,7 @@ mod tests {
     #[test]
     fn test_cache_stats() {
         let cache = TileCache::new();
-        let coord = TileCoord::new(0, 0, 0);
+        let coord = TileCoord::new(0, 0, 0, 256);
 
         // Miss
         cache.get(&coord);

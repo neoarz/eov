@@ -181,8 +181,9 @@ pub struct TileRange {
 impl TileRange {
     /// Iterate over all tile coordinates in this range
     pub fn iter(&self) -> impl Iterator<Item = TileCoord> + '_ {
+        let tile_size = 256;
         (self.start_y..self.end_y).flat_map(move |y| {
-            (self.start_x..self.end_x).map(move |x| TileCoord::new(self.level, x, y))
+            (self.start_x..self.end_x).map(move |x| TileCoord::new(self.level, x, y, tile_size))
         })
     }
 

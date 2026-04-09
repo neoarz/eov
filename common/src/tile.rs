@@ -18,11 +18,13 @@ pub struct TileCoord {
     pub x: u64,
     /// Y tile index
     pub y: u64,
+    /// Tile size used to address this level
+    pub tile_size: u32,
 }
 
 impl TileCoord {
-    pub fn new(level: u32, x: u64, y: u64) -> Self {
-        Self { level, x, y }
+    pub fn new(level: u32, x: u64, y: u64, tile_size: u32) -> Self {
+        Self { level, x, y, tile_size }
     }
 }
 
@@ -118,6 +120,10 @@ impl TileManager {
         self.tile_size
     }
 
+    pub fn tile_size_for_level(&self, level: u32) -> u32 {
+        self.wsi.tile_size_for_level(level)
+    }
+
     /// Get the WSI file reference
     pub fn wsi(&self) -> &WsiFile {
         &self.wsi
@@ -129,13 +135,13 @@ impl TileManager {
             .ok_or(Error::InvalidLevel(coord.level, self.wsi.level_count() - 1))?;
 
         // Calculate actual tile dimensions (may be smaller at edges)
-        let tile_start_x = coord.x * self.tile_size as u64;
-        let tile_start_y = coord.y * self.tile_size as u64;
+        let tile_start_x = coord.x * coord.tile_size as u64;
+        let tile_start_y = coord.y * coord.tile_size as u64;
         
         let actual_width = (level_info.width.saturating_sub(tile_start_x))
-            .min(self.tile_size as u64) as u32;
+            .min(coord.tile_size as u64) as u32;
         let actual_height = (level_info.height.saturating_sub(tile_start_y))
-            .min(self.tile_size as u64) as u32;
+            .min(coord.tile_size as u64) as u32;
 
         if actual_width == 0 || actual_height == 0 {
             return Err(Error::InvalidCoordinates {
@@ -150,7 +156,7 @@ impl TileManager {
             coord, actual_width, actual_height
         );
 
-        let data = self.wsi.read_tile(coord.level, coord.x, coord.y)?;
+        let data = self.wsi.read_tile_with_size(coord.level, coord.x, coord.y, coord.tile_size)?;
 
         Ok(TileData::new(coord, data, actual_width, actual_height))
     }
@@ -185,7 +191,7 @@ impl TileManager {
             None => return Vec::new(),
         };
 
-        let tile_size = self.tile_size as f64;
+        let tile_size = self.tile_size_for_level(level) as f64;
         
         // Convert bounds from level 0 to current level coordinates
         let level_left = bounds_left / level_info.downsample;
@@ -216,7 +222,7 @@ impl TileManager {
 
         for y in start_tile_y..end_tile_y {
             for x in start_tile_x..end_tile_x {
-                tiles.push(TileCoord::new(level, x, y));
+                tiles.push(TileCoord::new(level, x, y, tile_size as u32));
                 if tiles.len() >= max_tiles {
                     return tiles;
                 }
@@ -241,10 +247,19 @@ impl TileManager {
         // Each tile at current level maps to one parent tile at level + 1
         if level + 1 < level_count {
             for tile in current_tiles {
-                // Parent tile covers 2x2 area of current tiles
-                let parent_x = tile.x / 2;
-                let parent_y = tile.y / 2;
-                let coord = TileCoord::new(level + 1, parent_x, parent_y);
+                let Some(level_info) = self.wsi.level(tile.level) else {
+                    continue;
+                };
+                let parent_tile_size = self.tile_size_for_level(level + 1);
+                let Some(parent_level_info) = self.wsi.level(level + 1) else {
+                    continue;
+                };
+                let image_x = tile.x as f64 * tile.tile_size as f64 * level_info.downsample;
+                let image_y = tile.y as f64 * tile.tile_size as f64 * level_info.downsample;
+                let parent_span = parent_tile_size as f64 * parent_level_info.downsample;
+                let parent_x = (image_x / parent_span).floor() as u64;
+                let parent_y = (image_y / parent_span).floor() as u64;
+                let coord = TileCoord::new(level + 1, parent_x, parent_y, parent_tile_size);
                 if !prefetch.contains(&coord) {
                     prefetch.push(coord);
                 }
@@ -255,11 +270,27 @@ impl TileManager {
         // Each tile at current level corresponds to 4 child tiles at level - 1
         if level > 0 {
             for tile in current_tiles {
-                for dy in 0..2u64 {
-                    for dx in 0..2u64 {
-                        let child_x = tile.x * 2 + dx;
-                        let child_y = tile.y * 2 + dy;
-                        let coord = TileCoord::new(level - 1, child_x, child_y);
+                let Some(level_info) = self.wsi.level(tile.level) else {
+                    continue;
+                };
+                let child_level = level - 1;
+                let child_tile_size = self.tile_size_for_level(child_level);
+                let Some(child_level_info) = self.wsi.level(child_level) else {
+                    continue;
+                };
+                let image_left = tile.x as f64 * tile.tile_size as f64 * level_info.downsample;
+                let image_top = tile.y as f64 * tile.tile_size as f64 * level_info.downsample;
+                let image_right = image_left + tile.tile_size as f64 * level_info.downsample;
+                let image_bottom = image_top + tile.tile_size as f64 * level_info.downsample;
+                let child_span = child_tile_size as f64 * child_level_info.downsample;
+                let start_x = (image_left / child_span).floor().max(0.0) as u64;
+                let start_y = (image_top / child_span).floor().max(0.0) as u64;
+                let end_x = (image_right / child_span).ceil().max(0.0) as u64;
+                let end_y = (image_bottom / child_span).ceil().max(0.0) as u64;
+
+                for child_y in start_y..end_y {
+                    for child_x in start_x..end_x {
+                        let coord = TileCoord::new(child_level, child_x, child_y, child_tile_size);
                         if !prefetch.contains(&coord) {
                             prefetch.push(coord);
                         }
@@ -286,9 +317,9 @@ mod tests {
 
     #[test]
     fn test_tile_coord_equality() {
-        let a = TileCoord::new(0, 1, 2);
-        let b = TileCoord::new(0, 1, 2);
-        let c = TileCoord::new(0, 1, 3);
+        let a = TileCoord::new(0, 1, 2, 256);
+        let b = TileCoord::new(0, 1, 2, 256);
+        let c = TileCoord::new(0, 1, 3, 256);
         
         assert_eq!(a, b);
         assert_ne!(a, c);
@@ -296,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_placeholder_tile() {
-        let coord = TileCoord::new(0, 0, 0);
+        let coord = TileCoord::new(0, 0, 0, 256);
         let tile = TileData::placeholder(coord, 256);
         
         assert_eq!(tile.width, 256);
@@ -314,7 +345,7 @@ mod tests {
         let wsi = WsiFile::open(&path).expect("Failed to open WSI file");
         let manager = TileManager::new(wsi);
         
-        let coord = TileCoord::new(0, 0, 0);
+        let coord = TileCoord::new(0, 0, 0, 256);
         let tile = manager.load_tile_sync(coord).expect("Failed to load tile");
         
         assert!(tile.width > 0);
@@ -333,7 +364,7 @@ mod tests {
         let manager = TileManager::new(wsi);
         
         // Get tiles visible in a 1024x768 viewport at level 0, origin
-        let tiles = manager.visible_tiles(0, 0.0, 0.0, 1024.0, 768.0, 1.0);
+        let tiles = manager.visible_tiles(0, 0.0, 0.0, 1024.0, 768.0);
         
         assert!(!tiles.is_empty());
         // At zoom 1.0 and viewport 1024x768 with 256 size tiles,

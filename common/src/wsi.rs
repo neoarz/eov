@@ -10,6 +10,8 @@ use tracing::{debug, info};
 
 /// Default tile size for rendering
 pub const DEFAULT_TILE_SIZE: u32 = 256;
+pub const MEDIUM_TILE_SIZE: u32 = 512;
+pub const COARSE_TILE_SIZE: u32 = 1024;
 
 /// WSI file level information
 #[derive(Debug, Clone)]
@@ -179,6 +181,21 @@ impl WsiFile {
         self.tile_size
     }
 
+    /// Get the preferred tile size for a specific pyramid level.
+    pub fn tile_size_for_level(&self, level: u32) -> u32 {
+        let Some(level_info) = self.level(level) else {
+            return self.tile_size;
+        };
+
+        if level_info.downsample >= 16.0 {
+            COARSE_TILE_SIZE
+        } else if level_info.downsample >= 4.0 {
+            MEDIUM_TILE_SIZE
+        } else {
+            DEFAULT_TILE_SIZE
+        }
+    }
+
     /// Set tile size
     pub fn set_tile_size(&mut self, size: u32) {
         self.tile_size = size;
@@ -254,19 +271,30 @@ impl WsiFile {
     /// * `tile_x` - Tile X coordinate
     /// * `tile_y` - Tile Y coordinate
     pub fn read_tile(&self, level: u32, tile_x: u64, tile_y: u64) -> Result<Vec<u8>> {
+        self.read_tile_with_size(level, tile_x, tile_y, self.tile_size)
+    }
+
+    /// Read a tile at the specified coordinates using an explicit tile size.
+    pub fn read_tile_with_size(
+        &self,
+        level: u32,
+        tile_x: u64,
+        tile_y: u64,
+        tile_size: u32,
+    ) -> Result<Vec<u8>> {
         let level_info = self.level(level)
             .ok_or(Error::InvalidLevel(level, self.level_count() - 1))?;
 
         // Calculate pixel coordinates at level 0
-        let x = (tile_x * self.tile_size as u64) as f64 * level_info.downsample;
-        let y = (tile_y * self.tile_size as u64) as f64 * level_info.downsample;
+        let x = (tile_x * tile_size as u64) as f64 * level_info.downsample;
+        let y = (tile_y * tile_size as u64) as f64 * level_info.downsample;
 
         // Clamp tile size to not exceed level bounds
-        let tile_start_x = tile_x * self.tile_size as u64;
-        let tile_start_y = tile_y * self.tile_size as u64;
+        let tile_start_x = tile_x * tile_size as u64;
+        let tile_start_y = tile_y * tile_size as u64;
         
-        let actual_width = (level_info.width - tile_start_x).min(self.tile_size as u64) as u32;
-        let actual_height = (level_info.height - tile_start_y).min(self.tile_size as u64) as u32;
+        let actual_width = (level_info.width - tile_start_x).min(tile_size as u64) as u32;
+        let actual_height = (level_info.height - tile_start_y).min(tile_size as u64) as u32;
 
         self.read_region(x as i64, y as i64, level, actual_width, actual_height)
     }
