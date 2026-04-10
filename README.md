@@ -54,7 +54,7 @@ Examples:
 
 ```bash
 eov slide.svs
-eov slide1.svs slide2.svs [...paths to other slides...]
+eov slide1.svs slide2.svs slide3.svs
 eov --debug --backend gpu slide.svs
 eov --gpu slide.svs
 eov --log-level debug probe fixtures/C3L-00088-22.svs

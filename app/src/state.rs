@@ -2,7 +2,7 @@
 
 use crate::tile_loader::TileLoader;
 use common::{TileManager, ViewportState, WsiFile};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,6 +47,28 @@ impl RecentFile {
             last_opened: std::time::SystemTime::now(),
         }
     }
+}
+
+fn normalize_recent_path(path: &PathBuf) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.clone())
+}
+
+fn dedupe_recent_files(paths: impl IntoIterator<Item = PathBuf>) -> Vec<RecentFile> {
+    let mut seen_paths = HashSet::new();
+    let mut recent_files = Vec::new();
+
+    for path in paths {
+        let normalized_path = normalize_recent_path(&path);
+        if seen_paths.insert(normalized_path.clone()) {
+            recent_files.push(RecentFile::new(normalized_path));
+        }
+
+        if recent_files.len() >= MAX_RECENT_FILES {
+            break;
+        }
+    }
+
+    recent_files
 }
 
 /// Available tools
@@ -406,18 +428,15 @@ impl AppState {
             return Vec::new();
         };
 
-        content
-            .lines()
-            .filter_map(|line| {
-                let path = PathBuf::from(line.trim());
-                if path.exists() {
-                    Some(RecentFile::new(path))
-                } else {
-                    None
-                }
-            })
-            .take(MAX_RECENT_FILES)
-            .collect()
+        dedupe_recent_files(content.lines().filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            let path = PathBuf::from(trimmed);
+            path.exists().then_some(path)
+        }))
     }
 
     /// Save recently opened files to disk
@@ -446,11 +465,14 @@ impl AppState {
 
     /// Add a file to the recently opened list
     pub fn add_to_recent(&mut self, path: &PathBuf) {
+        let normalized_path = normalize_recent_path(path);
+
         // Remove if already exists (we'll re-add at top)
-        self.recent_files.retain(|f| f.path != *path);
+        self.recent_files.retain(|f| f.path != normalized_path);
 
         // Add to front
-        self.recent_files.insert(0, RecentFile::new(path.clone()));
+        self.recent_files
+            .insert(0, RecentFile::new(normalized_path));
 
         // Trim to max size
         self.recent_files.truncate(MAX_RECENT_FILES);
@@ -1156,5 +1178,32 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dedupe_recent_files;
+    use std::path::PathBuf;
+
+    #[test]
+    fn dedupe_recent_files_preserves_first_occurrence_order() {
+        let recent_files = dedupe_recent_files([
+            PathBuf::from("/tmp/slide-c.svs"),
+            PathBuf::from("/tmp/slide-b.svs"),
+            PathBuf::from("/tmp/slide-c.svs"),
+            PathBuf::from("/tmp/slide-a.svs"),
+            PathBuf::from("/tmp/slide-b.svs"),
+        ]);
+
+        let paths: Vec<_> = recent_files.into_iter().map(|file| file.path).collect();
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("/tmp/slide-c.svs"),
+                PathBuf::from("/tmp/slide-b.svs"),
+                PathBuf::from("/tmp/slide-a.svs"),
+            ]
+        );
     }
 }

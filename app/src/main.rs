@@ -648,10 +648,32 @@ fn main() -> Result<()> {
         }
         let state = state.read();
         update_tabs(&ui, &state);
+    } else {
+        prepare_launch_panes(&ui, &state, launch_options.files_to_open.len());
     }
 
-    for path in launch_options.files_to_open {
+    for (pane_index, path) in launch_options.files_to_open.into_iter().enumerate() {
+        if pane_index > 0 {
+            let pane = PaneId(pane_index);
+            {
+                let mut state = state.write();
+                state.set_focused_pane(pane);
+            }
+            ui.set_focused_pane(pane.as_index());
+        }
+
         open_file(&ui, &state, &tile_cache, &render_timer, path);
+    }
+
+    if state.read().split_enabled {
+        {
+            let mut state = state.write();
+            state.set_focused_pane(PaneId::PRIMARY);
+        }
+        let state = state.read();
+        ui.set_split_enabled(state.split_enabled);
+        ui.set_focused_pane(state.focused_pane.as_index());
+        update_tabs(&ui, &state);
     }
 
     request_render_loop(&render_timer, &ui_weak, &state, &tile_cache);
@@ -671,6 +693,33 @@ fn setup_callbacks(
     render_timer: Rc<Timer>,
 ) {
     callbacks::setup_callbacks(ui, state, tile_cache, render_timer);
+}
+
+fn prepare_launch_panes(ui: &AppWindow, state: &Arc<RwLock<AppState>>, pane_count: usize) {
+    if pane_count <= 1 {
+        return;
+    }
+
+    let mut inserted_panes = Vec::new();
+    {
+        let mut state = state.write();
+        while state.panes.len() < pane_count {
+            let next_index = state.panes.len();
+            let source_pane = PaneId(next_index.saturating_sub(1));
+            let new_pane = state.insert_pane(next_index);
+            inserted_panes.push((new_pane, source_pane));
+        }
+        state.set_focused_pane(PaneId::PRIMARY);
+    }
+
+    for (new_pane, source_pane) in inserted_panes {
+        insert_pane_ui_state(new_pane, Some(source_pane));
+    }
+
+    let state = state.read();
+    ui.set_split_enabled(state.split_enabled);
+    ui.set_focused_pane(state.focused_pane.as_index());
+    update_tabs(ui, &state);
 }
 
 fn open_file(
