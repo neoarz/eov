@@ -1321,8 +1321,8 @@ component PaneView inherits Rectangle {
     callback cancel-tool();
     callback close-active-tab();
 
-    border-width: dragging-tab-id != -1 && drop-target-pane == pane-data.id ? 2px : (focused-pane == pane-data.id ? 2px : 0px);
-    border-color: dragging-tab-id != -1 && drop-target-pane == pane-data.id ? white : Theme.accent;
+    border-width: 0px;
+    border-color: transparent;
     background: dragging-tab-id != -1 && drop-target-pane == pane-data.id ? #ffffff08 : transparent;
 
     VerticalLayout {
@@ -1383,6 +1383,16 @@ component PaneView inherits Rectangle {
                 close-tab => { root.close-active-tab(); }
             }
         }
+    }
+
+    if dragging-tab-id != -1 && drop-target-pane == pane-data.id: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+        border-width: 2px;
+        border-color: white;
     }
 
     if root.dragging-tab-id != -1 && root.drop-target-pane == root.pane-data.id && root.split-drop-side != -1: Rectangle {

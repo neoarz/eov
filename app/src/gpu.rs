@@ -177,9 +177,9 @@ impl GpuRenderer {
             return None;
         }
 
-        if !self.ensure_surface(slot, width, height) {
+        let Some(surface_recreated) = self.ensure_surface(slot, width, height) else {
             return None;
-        }
+        };
 
         let frame = QueuedFrame {
             width,
@@ -187,7 +187,12 @@ impl GpuRenderer {
             draws,
         };
         self.pending_frames.insert(slot.index(), frame);
-        self.surface_image(slot)
+
+        if surface_recreated {
+            None
+        } else {
+            self.surface_image(slot)
+        }
     }
 
     fn initialize(&mut self, graphics_api: &GraphicsAPI) {
@@ -313,9 +318,9 @@ impl GpuRenderer {
         slot: SurfaceSlot,
         width: u32,
         height: u32,
-    ) -> bool {
+    ) -> Option<bool> {
         let Some(runtime) = self.runtime.as_mut() else {
-            return false;
+            return None;
         };
 
         let slot_index = slot.index();
@@ -326,7 +331,7 @@ impl GpuRenderer {
             .is_none_or(|surface| surface.width != width || surface.height != height);
 
         if !needs_recreate {
-            return true;
+            return Some(false);
         }
 
         let texture = runtime.device.create_texture(&wgpu::TextureDescriptor {
@@ -346,7 +351,7 @@ impl GpuRenderer {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let image = match Image::try_from(texture.clone()) {
             Ok(image) => image,
-            Err(_) => return false,
+            Err(_) => return None,
         };
 
         runtime.surfaces.insert(slot_index, ImportedSurface {
@@ -357,7 +362,7 @@ impl GpuRenderer {
             height,
         });
 
-        true
+        Some(true)
     }
 
     pub fn surface_image(&self, slot: SurfaceSlot) -> Option<Image> {

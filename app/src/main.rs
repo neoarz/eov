@@ -27,7 +27,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use tile_loader::{TileLoader, calculate_wanted_tiles};
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Coarse tile blend data: (tile_data, coarse_offset, coarse_size, blend_factor)
 type CoarseBlendData = (Arc<common::TileData>, [f32; 2], [f32; 2], f32);
@@ -179,12 +179,21 @@ fn set_cached_pane_content(pane: PaneId, image: Image) {
     with_pane_render_cache(pane.0 + 1, |cache| {
         cache[pane.0].content = Some(image);
     });
+
+    if pane.0 == 1 {
+        debug!(pane = pane.0, "set pane cached content");
+    }
 }
 
 fn set_cached_pane_minimap(pane: PaneId, image: Option<Image>) {
+    let has_minimap = image.is_some();
     with_pane_render_cache(pane.0 + 1, |cache| {
         cache[pane.0].minimap_thumbnail = image;
     });
+
+    if pane.0 == 1 {
+        debug!(pane = pane.0, has_minimap, "set pane cached minimap");
+    }
 }
 
 fn with_pane_view_model<T>(f: impl FnOnce(&Rc<VecModel<PaneViewData>>) -> T) -> T {
@@ -209,6 +218,23 @@ fn reset_pane_ui_state() {
     PANE_VIEW_MODEL.with(|model| {
         let model = model.borrow_mut();
         model.clear();
+    });
+}
+
+fn insert_pane_ui_state(new_pane: PaneId, source_pane: Option<PaneId>) {
+    PANE_RENDER_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let insert_index = new_pane.0.min(cache.len());
+        let entry = source_pane
+            .and_then(|pane| cache.get(pane.0).cloned())
+            .unwrap_or_default();
+        cache.insert(insert_index, entry);
+    });
+
+    PANE_UI_MODELS.with(|models| {
+        let mut models = models.borrow_mut();
+        let insert_index = new_pane.0.min(models.len());
+        models.insert(insert_index, PaneUiModels::default());
     });
 }
 
@@ -243,6 +269,10 @@ fn clear_cached_pane(pane: PaneId) {
     with_pane_render_cache(pane.0 + 1, |cache| {
         cache[pane.0] = PaneRenderCacheEntry::default();
     });
+
+    if pane.0 == 1 {
+        debug!(pane = pane.0, "cleared pane cache");
+    }
 }
 
 fn refresh_tab_ui(ui: &AppWindow, state: &AppState) {
@@ -633,16 +663,16 @@ fn setup_callbacks(
                     }
                 }
                 "split-right" => {
-                    let split_enabled = {
+                    let (split_enabled, source_pane, new_pane) = {
                         let mut state = state_handle.write();
                         let source_pane = pane;
                         let new_pane = state.insert_pane(source_pane.0 + 1);
                         state.duplicate_tab_to_pane(tab_id, new_pane);
                         state.set_focused_pane(new_pane);
                         state.request_render();
-                        state.split_enabled
+                        (state.split_enabled, source_pane, new_pane)
                     };
-                    reset_pane_ui_state();
+                    insert_pane_ui_state(new_pane, Some(source_pane));
                     ui.set_split_enabled(split_enabled);
                     let state = state_handle.read();
                     ui.set_focused_pane(state.focused_pane.as_index());
@@ -881,16 +911,16 @@ fn setup_callbacks(
 
         ui.on_split_right(move |pane, id| {
             if let Some(ui) = ui_weak.upgrade() {
-                let (split_enabled, focused_pane) = {
+                let (split_enabled, focused_pane, source_pane) = {
                     let mut state = state_handle.write();
                     let source_pane = pane_from_index(pane);
                     let new_pane = state.insert_pane(source_pane.0 + 1);
                     state.duplicate_tab_to_pane(id, new_pane);
                     state.set_focused_pane(new_pane);
                     state.request_render();
-                    (state.split_enabled, state.focused_pane)
+                    (state.split_enabled, state.focused_pane, source_pane)
                 };
-                reset_pane_ui_state();
+                insert_pane_ui_state(focused_pane, Some(source_pane));
                 ui.set_split_enabled(split_enabled);
                 ui.set_focused_pane(focused_pane.as_index());
                 let state = state_handle.read();
@@ -1294,6 +1324,8 @@ fn setup_callbacks(
 
         ui.on_split_tab_by_drop(move |id, to| {
             if let Some(ui) = ui_weak.upgrade() {
+                let mut source_pane_for_cache = PaneId::PRIMARY;
+                let mut target_pane_for_cache = PaneId::PRIMARY;
                 {
                     let mut state = state_handle.write();
                     let source_pane = state
@@ -1303,9 +1335,11 @@ fn setup_callbacks(
                         .find(|(_, pane_state)| pane_state.tabs.contains(&id))
                         .map(|(index, _)| PaneId(index))
                         .unwrap_or(PaneId::PRIMARY);
+                    source_pane_for_cache = source_pane;
                     state.split_tab_to_new_pane(id, source_pane, to.max(0) as usize);
+                    target_pane_for_cache = state.focused_pane;
                 }
-                reset_pane_ui_state();
+                insert_pane_ui_state(target_pane_for_cache, Some(source_pane_for_cache));
                 let state = state_handle.read();
                 ui.set_split_enabled(state.split_enabled);
                 ui.set_focused_pane(state.focused_pane.as_index());
@@ -1865,12 +1899,25 @@ fn update_tabs(ui: &AppWindow, state: &AppState) {
         }
         for (index, pane_data) in pane_models.into_iter().enumerate() {
             if index < row_count {
-                let should_update = pane_model
+                let next_pane_data = pane_model
                     .row_data(index)
-                    .map(|existing| pane_view_data_changed(&existing, &pane_data))
-                    .unwrap_or(true);
+                    .map(|existing| {
+                        let mut merged = pane_data.clone();
+                        if merged.content == Image::default() && existing.content != Image::default() {
+                            merged.content = existing.content.clone();
+                        }
+                        if merged.minimap_thumbnail == Image::default()
+                            && existing.minimap_thumbnail != Image::default()
+                        {
+                            merged.minimap_thumbnail = existing.minimap_thumbnail.clone();
+                        }
+                        let should_update = pane_view_data_changed(&existing, &merged);
+                        (merged, should_update)
+                    })
+                    .unwrap_or((pane_data, true));
+                let (next_pane_data, should_update) = next_pane_data;
                 if should_update {
-                    pane_model.set_row_data(index, pane_data);
+                    pane_model.set_row_data(index, next_pane_data);
                 }
             } else {
                 pane_model.push(pane_data);
@@ -2105,6 +2152,19 @@ fn update_and_render(
                 .and_then(|entry| entry.content.as_ref())
                 .is_none()
         });
+        let force_render = file_switched || content_missing;
+
+        if pane.0 == 1 {
+            debug!(
+                pane = pane.0,
+                file_id,
+                file_switched,
+                force_render,
+                content_missing,
+                minimap_missing,
+                "pane cache state before render"
+            );
+        }
 
         if file_switched {
             if let Some(pane_state) = file.pane_state_mut(pane) {
@@ -2122,19 +2182,29 @@ fn update_and_render(
             tile_cache,
             pane_width,
             content_height,
-            file_switched,
+            force_render,
             render_backend,
         );
+
+        if pane.0 == 1 {
+            debug!(
+                pane = pane.0,
+                file_id,
+                rendered = outcome.rendered,
+                image = outcome.image.is_some(),
+                keep_running = outcome.keep_running,
+                "pane render outcome"
+            );
+        }
+
         keep_running |= outcome.keep_running;
         rendered_frame |= outcome.rendered;
         if let Some(image) = outcome.image {
             set_cached_pane_content(pane, image);
             state.set_last_rendered_file_id(pane, Some(file_id));
-        } else if content_missing {
-            state.set_last_rendered_file_id(pane, None);
-            keep_running = true;
         } else {
             state.set_last_rendered_file_id(pane, Some(file_id));
+            keep_running |= content_missing;
         }
     }
 
@@ -2252,6 +2322,27 @@ fn render_pane_to_image(
     let tiles_pending = file.tile_loader.pending_count() > 0;
 
     let keep_running = animating || new_tiles_loaded || tiles_pending;
+
+    if pane.0 == 1 {
+        debug!(
+            pane = pane.0,
+            zoom = vp_zoom,
+            width = vp_width,
+            height = vp_height,
+            level,
+            cached_count,
+            coarse_tiles = cached_coarse_tiles.len(),
+            previous_tiles_loaded,
+            tile_epoch_advanced,
+            tiles_pending,
+            viewport_changed,
+            level_changed,
+            force_render,
+            keep_running,
+            "pane render decision inputs"
+        );
+    }
+
     if !force_render && !is_first_frame && !viewport_changed && !level_changed && !new_tiles_loaded {
         return PaneRenderOutcome {
             image: None,
@@ -3881,13 +3972,7 @@ fn full_minimap_rect() -> MinimapRect {
 }
 
 fn pane_viewport_state(file: &OpenFile, pane: PaneId) -> Option<&ViewportState> {
-    file.pane_state(pane)
-        .map(|pane_state| &pane_state.viewport)
-        .or(match pane {
-            PaneId::Primary => Some(&file.viewport),
-            PaneId::SECONDARY => file.secondary_viewport.as_ref(),
-            _ => None,
-        })
+    file.pane_state(pane).map(|pane_state| &pane_state.viewport)
 }
 
 fn pane_overlay_data(
