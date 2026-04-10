@@ -6,6 +6,7 @@ export component ToolButton inherits Rectangle {
     in property <string> tooltip-text;
     in property <bool> is-active: false;
     in property <bool> enabled: true;
+    out property <bool> hovered: touch.has-hover;
     callback clicked();
 
     width: 32px;
@@ -29,30 +30,13 @@ export component ToolButton inherits Rectangle {
         }
     }
 
-    if touch.has-hover && root.tooltip-text != "": Rectangle {
-        x: parent.width / 2 - self.width / 2;
-        y: parent.height + 6px;
-        width: tooltip.preferred-width + 12px;
-        height: tooltip.preferred-height + 6px;
-        background: #111111ee;
-        border-radius: 4px;
-        border-width: 1px;
-        border-color: Theme.border;
-
-        tooltip := Text {
-            x: 6px;
-            y: 3px;
-            text: root.tooltip-text;
-            color: white;
-            font-size: 11px;
-        }
-    }
 }
 
 export component IconButton inherits Rectangle {
     in property <string> text;
     in property <string> tooltip-text: "";
     in property <bool> enabled: true;
+    out property <bool> hovered: touch.has-hover;
     callback clicked();
     callback secondary-clicked(length, length);
 
@@ -82,24 +66,6 @@ export component IconButton inherits Rectangle {
         }
     }
 
-    if touch.has-hover && root.tooltip-text != "": Rectangle {
-        x: parent.width / 2 - self.width / 2;
-        y: parent.height + 6px;
-        width: tooltip.preferred-width + 12px;
-        height: tooltip.preferred-height + 6px;
-        background: #111111ee;
-        border-radius: 4px;
-        border-width: 1px;
-        border-color: Theme.border;
-
-        tooltip := Text {
-            x: 6px;
-            y: 3px;
-            text: root.tooltip-text;
-            color: white;
-            font-size: 11px;
-        }
-    }
 }
 
 component Tab inherits Rectangle {

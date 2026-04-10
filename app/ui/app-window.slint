@@ -300,6 +300,25 @@ export component AppWindow inherits Window {
         }
     }
 
+    if toolbar.hovered-tooltip-visible: Rectangle {
+        x: max(4px, min(root.width - self.width - 4px, toolbar.hovered-tooltip-center-x - self.width / 2));
+        y: toolbar.hovered-tooltip-top-y;
+        width: toolbar-tooltip.preferred-width + 12px;
+        height: toolbar-tooltip.preferred-height + 6px;
+        background: #111111ee;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        toolbar-tooltip := Text {
+            x: 6px;
+            y: 3px;
+            text: toolbar.hovered-tooltip-text;
+            color: white;
+            font-size: 11px;
+        }
+    }
+
     ContextMenu {
         items: context-menu-items;
         is-visible: context-menu-visible;
