@@ -40,12 +40,9 @@ pub fn open_file(
                     PaneId::PRIMARY
                 };
 
-                // Replace the focused pane's active home tab with the opened file.
-                if let Some(active_id) = state_guard.active_tab_id_for_pane(target_pane)
-                    && state_guard.is_home_tab(active_id)
-                {
-                    state_guard.close_home_tab(active_id);
-                }
+                let home_tab_to_close = state_guard
+                    .active_tab_id_for_pane(target_pane)
+                    .filter(|&active_id| state_guard.is_home_tab(active_id));
 
                 // Get viewport size from the focused pane (use reasonable defaults if not yet laid out)
                 let pane_count = state_guard.panes.len().max(1) as f64;
@@ -101,14 +98,20 @@ pub fn open_file(
                 // Generate small thumbnail for minimap (lazy - only reads what's needed)
                 let thumbnail = generate_thumbnail(&wsi, 150);
 
-                state_guard.add_file(
+                let opened_file_id = state_guard.add_file(
                     path.clone(),
                     wsi,
                     tile_manager,
                     tile_loader,
                     viewport,
                     thumbnail,
-                )
+                );
+
+                if let Some(home_tab_id) = home_tab_to_close {
+                    state_guard.close_home_tab(home_tab_id);
+                }
+
+                opened_file_id
             };
 
             let level_count = {
