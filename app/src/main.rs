@@ -320,7 +320,7 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    info!("Starting Spectryn WSI Viewer");
+    info!("Starting EOV WSI Viewer");
 
     let launch_options = parse_launch_options()?;
     let persisted_backend = config::load_render_backend()?;

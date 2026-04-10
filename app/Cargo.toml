@@ -3,6 +3,10 @@ name = "app"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "eov"
+path = "src/main.rs"
+
 [dependencies]
 # Common crate
 common = { path = "../common" }

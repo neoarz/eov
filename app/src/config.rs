@@ -35,13 +35,13 @@ struct AppConfig {
 }
 
 pub fn resolve_config_path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("SPECTRYN_CONFIG") {
+    if let Some(path) = std::env::var_os("EOV_CONFIG") {
         return Ok(PathBuf::from(path));
     }
 
     let home =
-        dirs::home_dir().context("failed to determine the home directory for SPECTRYN config")?;
-    Ok(home.join(".eosin").join("spectryn.toml"))
+        dirs::home_dir().context("failed to determine the home directory for EOV config")?;
+    Ok(home.join(".eosin").join("eov.toml"))
 }
 
 pub fn load_render_backend() -> Result<Option<RenderBackend>> {
@@ -68,7 +68,7 @@ pub fn save_render_backend(backend: RenderBackend) -> Result<()> {
         render_backend: Some(ConfigRenderBackend::from(backend)),
     };
     let contents =
-        toml::to_string_pretty(&config).context("failed to serialize SPECTRYN configuration")?;
+        toml::to_string_pretty(&config).context("failed to serialize EOV configuration")?;
     fs::write(&path, contents)
         .with_context(|| format!("failed to write config file at {}", path.display()))?;
     Ok(())
