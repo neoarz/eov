@@ -595,7 +595,10 @@ impl ViewportState {
         self.zoom_start_time = Some(Instant::now());
         self.target_zoom = (self.viewport.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
 
-        trace!("Zoom requested: factor={}, target={}", factor, self.target_zoom);
+        trace!(
+            "Zoom requested: factor={}, target={}",
+            factor, self.target_zoom
+        );
     }
 
     /// Set viewport size

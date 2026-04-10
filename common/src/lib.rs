@@ -1,4 +1,4 @@
-//! Common crate for eosmol WSI viewer
+//! Common crate for spectryn WSI viewer
 //!
 //! This crate provides high-performance WSI (Whole Slide Image) file handling,
 //! tiling, caching, and rendering utilities.

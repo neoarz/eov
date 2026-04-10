@@ -1172,7 +1172,10 @@ pub fn setup_callbacks(
                                     }
                                     "zoom-out" => {
                                         let mut state = state_handle.write();
-                                        if zoom_active_viewport(&mut state, 1.0 / ACTION_ZOOM_FACTOR) {
+                                        if zoom_active_viewport(
+                                            &mut state,
+                                            1.0 / ACTION_ZOOM_FACTOR,
+                                        ) {
                                             state.request_render();
                                         }
                                     }
@@ -1248,9 +1251,7 @@ pub fn setup_callbacks(
                     };
                     let buttons_right_start = win_w - 138.0;
 
-                    if ly < toolbar_height
-                        && lx >= toolbar_action_width
-                        && lx < buttons_right_start
+                    if ly < toolbar_height && lx >= toolbar_action_width && lx < buttons_right_start
                     {
                         drag_press.set(Some((cx, cy)));
 
