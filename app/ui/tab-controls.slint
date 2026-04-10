@@ -140,6 +140,7 @@ export component IconButton inherits Rectangle {
     in property <string> text;
     in property <string> tooltip-text: "";
     in property <bool> enabled: true;
+    in property <length> text-offset-y: 0px;
     out property <bool> hovered: touch.has-hover;
     callback clicked();
     callback secondary-clicked(length, length);
@@ -160,14 +161,15 @@ export component IconButton inherits Rectangle {
         }
     }
 
-    HorizontalLayout {
-        alignment: center;
-        Text {
-            text: root.text;
-            color: root.enabled ? Theme.text-primary : Theme.text-secondary;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
+    Text {
+        y: root.text-offset-y;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.enabled ? Theme.text-primary : Theme.text-secondary;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 
 }

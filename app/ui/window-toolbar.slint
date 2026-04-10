@@ -108,6 +108,7 @@ export component WindowToolbar inherits Rectangle {
             zoom-out-button := IconButton {
                 text: "−";
                 tooltip-text: "Zoom out";
+                text-offset-y: 1px;
                 clicked => { root.zoom-out-requested(); }
             }
 
