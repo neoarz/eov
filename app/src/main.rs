@@ -21,6 +21,7 @@ use slint::{
 };
 use state::{AppState, OpenFile, PaneId, RenderBackend, TileRequestSignature};
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -202,6 +203,15 @@ fn with_pane_ui_models<T>(pane_count: usize, f: impl FnOnce(&mut Vec<PaneUiModel
     })
 }
 
+fn reset_pane_ui_state() {
+    PANE_RENDER_CACHE.with(|cache| cache.borrow_mut().clear());
+    PANE_UI_MODELS.with(|models| models.borrow_mut().clear());
+    PANE_VIEW_MODEL.with(|model| {
+        let model = model.borrow_mut();
+        model.clear();
+    });
+}
+
 fn model_matches<T>(model: &VecModel<T>, data: &[T]) -> bool
 where
     T: Clone + PartialEq + 'static,
@@ -211,6 +221,22 @@ where
             .iter()
             .enumerate()
             .all(|(index, value)| model.row_data(index).as_ref() == Some(value))
+}
+
+fn pane_view_data_changed(
+    existing: &PaneViewData,
+    next: &PaneViewData,
+) -> bool {
+    existing.id != next.id
+        || existing.content != next.content
+        || existing.viewport_info != next.viewport_info
+        || existing.minimap_thumbnail != next.minimap_thumbnail
+        || existing.minimap_rect != next.minimap_rect
+        || existing.is_home_tab != next.is_home_tab
+        || existing.zoom_slider_position != next.zoom_slider_position
+        || existing.roi_rect != next.roi_rect
+        || existing.candidate_measurement != next.candidate_measurement
+        || existing.is_loading != next.is_loading
 }
 
 fn clear_cached_pane(pane: PaneId) {
@@ -611,6 +637,7 @@ fn setup_callbacks(
                         state.request_render();
                         state.split_enabled
                     };
+                    reset_pane_ui_state();
                     ui.set_split_enabled(split_enabled);
                     let state = state_handle.read();
                     ui.set_focused_pane(state.focused_pane.as_index());
@@ -858,6 +885,7 @@ fn setup_callbacks(
                     state.request_render();
                     (state.split_enabled, state.focused_pane)
                 };
+                reset_pane_ui_state();
                 ui.set_split_enabled(split_enabled);
                 ui.set_focused_pane(focused_pane.as_index());
                 let state = state_handle.read();
@@ -1272,6 +1300,7 @@ fn setup_callbacks(
                         .unwrap_or(PaneId::PRIMARY);
                     state.split_tab_to_new_pane(id, source_pane, to.max(0) as usize);
                 }
+                reset_pane_ui_state();
                 let state = state_handle.read();
                 ui.set_split_enabled(state.split_enabled);
                 ui.set_focused_pane(state.focused_pane.as_index());
@@ -1801,7 +1830,13 @@ fn update_tabs(ui: &AppWindow, state: &AppState) {
         }
         for (index, pane_data) in pane_models.into_iter().enumerate() {
             if index < row_count {
-                pane_model.set_row_data(index, pane_data);
+                let should_update = pane_model
+                    .row_data(index)
+                    .map(|existing| pane_view_data_changed(&existing, &pane_data))
+                    .unwrap_or(true);
+                if should_update {
+                    pane_model.set_row_data(index, pane_data);
+                }
             } else {
                 pane_model.push(pane_data);
             }
@@ -1941,6 +1976,70 @@ fn update_and_render(
         / pane_count.max(1) as f64)
         .max(100.0);
 
+    let mut wanted_tiles_by_file: HashMap<i32, HashSet<common::TileCoord>> = HashMap::new();
+    for (pane_index, file_id) in active_file_ids.iter().copied().enumerate() {
+        let Some(file_id) = file_id else {
+            continue;
+        };
+        let pane = PaneId(pane_index);
+        let Some(file_index) = state.open_files.iter().position(|f| f.id == file_id) else {
+            continue;
+        };
+
+        let Some((viewport_state, last_request)) = ({
+            let file = &mut state.open_files[file_index];
+            match file.pane_state_mut(pane) {
+                Some(pane_state) => {
+                    pane_state.viewport.set_size(pane_width, content_height);
+                    Some((pane_state.viewport.clone(), pane_state.last_request))
+                }
+                None => None,
+            }
+        }) else {
+            continue;
+        };
+
+        let vp = &viewport_state.viewport;
+        let margin_tiles = if viewport_state.is_moving() { 1 } else { 0 };
+        let request = {
+            let file = &state.open_files[file_index];
+            let trilinear =
+                render::calculate_trilinear_levels(&file.wsi, vp.effective_downsample());
+            let level = trilinear.level_fine;
+            tile_request_signature(&file.tile_manager, vp, level, margin_tiles).map(|signature| {
+                let wanted = calculate_wanted_tiles(
+                    &file.tile_manager,
+                    level,
+                    vp.bounds().left,
+                    vp.bounds().top,
+                    vp.bounds().right,
+                    vp.bounds().bottom,
+                    margin_tiles,
+                );
+                (signature, wanted)
+            })
+        };
+        if let Some((signature, wanted)) = request {
+            if last_request != Some(signature) {
+                if let Some(file) = state.open_files.get_mut(file_index) {
+                    if let Some(pane_state) = file.pane_state_mut(pane) {
+                        pane_state.last_request = Some(signature);
+                    }
+                }
+            }
+            wanted_tiles_by_file
+                .entry(file_id)
+                .or_default()
+                .extend(wanted);
+        }
+    }
+
+    for (file_id, wanted_tiles) in wanted_tiles_by_file {
+        if let Some(file) = state.open_files.iter_mut().find(|f| f.id == file_id) {
+            file.tile_loader.set_wanted_tiles(wanted_tiles.into_iter().collect());
+        }
+    }
+
     let mut keep_running = render_requested;
     let mut rendered_frame = false;
 
@@ -1961,13 +2060,13 @@ fn update_and_render(
             continue;
         };
 
-        let minimap_missing = with_pane_render_cache(pane.0 + 1, |cache| {
+        let minimap_missing = with_pane_render_cache(pane_count, |cache| {
             cache.get(pane.0)
                 .and_then(|entry| entry.minimap_thumbnail.as_ref())
                 .is_none()
         });
 
-        if file_switched || render_requested {
+        if file_switched {
             if let Some(pane_state) = file.pane_state_mut(pane) {
                 pane_state.frame_count = 0;
             }
@@ -1982,7 +2081,7 @@ fn update_and_render(
             tile_cache,
             pane_width,
             content_height,
-            render_requested || file_switched,
+            file_switched,
         );
         keep_running |= outcome.keep_running;
         rendered_frame |= outcome.rendered;
@@ -2082,22 +2181,6 @@ fn render_pane_to_image(
     let new_tiles_loaded =
         cached_count > pane_state.tiles_loaded_since_render || !cached_coarse_tiles.is_empty();
     let tiles_pending = tile_loader.pending_count() > 0;
-
-    if let Some(signature) = tile_request_signature(tile_manager, vp, level, margin_tiles)
-        && pane_state.last_request != Some(signature)
-    {
-        let wanted = calculate_wanted_tiles(
-            tile_manager,
-            level,
-            bounds.left,
-            bounds.top,
-            bounds.right,
-            bounds.bottom,
-            margin_tiles,
-        );
-        tile_loader.set_wanted_tiles(wanted);
-        pane_state.last_request = Some(signature);
-    }
 
     let keep_running = animating || new_tiles_loaded || tiles_pending;
     if !force_render && !is_first_frame && !viewport_changed && !level_changed && !new_tiles_loaded {
@@ -3618,7 +3701,7 @@ fn hidden_measurement_line() -> MeasurementLine {
 fn set_pane_roi_rect(ui: &AppWindow, pane: PaneId, rect: ROIRect) {
     match pane {
         PaneId::Primary => ui.set_primary_roi_rect(rect),
-        PaneId::Secondary => ui.set_secondary_roi_rect(rect),
+        PaneId::SECONDARY => ui.set_secondary_roi_rect(rect),
         _ => {}
     }
 }
@@ -3627,7 +3710,7 @@ fn set_pane_measurements(ui: &AppWindow, pane: PaneId, lines: Vec<MeasurementLin
     let model = Rc::new(VecModel::from(lines));
     match pane {
         PaneId::Primary => ui.set_primary_measurements(model.into()),
-        PaneId::Secondary => ui.set_secondary_measurements(model.into()),
+        PaneId::SECONDARY => ui.set_secondary_measurements(model.into()),
         _ => {}
     }
 }
@@ -3635,18 +3718,18 @@ fn set_pane_measurements(ui: &AppWindow, pane: PaneId, lines: Vec<MeasurementLin
 fn set_pane_candidate_measurement(ui: &AppWindow, pane: PaneId, line: MeasurementLine) {
     match pane {
         PaneId::Primary => ui.set_primary_candidate_measurement(line),
-        PaneId::Secondary => ui.set_secondary_candidate_measurement(line),
+        PaneId::SECONDARY => ui.set_secondary_candidate_measurement(line),
         _ => {}
     }
 }
 
 fn clear_tool_overlays(ui: &AppWindow, ant_offset: f32) {
     set_pane_roi_rect(ui, PaneId::Primary, hidden_roi_rect(ant_offset));
-    set_pane_roi_rect(ui, PaneId::Secondary, hidden_roi_rect(ant_offset));
+    set_pane_roi_rect(ui, PaneId::SECONDARY, hidden_roi_rect(ant_offset));
     set_pane_measurements(ui, PaneId::Primary, Vec::new());
-    set_pane_measurements(ui, PaneId::Secondary, Vec::new());
+    set_pane_measurements(ui, PaneId::SECONDARY, Vec::new());
     set_pane_candidate_measurement(ui, PaneId::Primary, hidden_measurement_line());
-    set_pane_candidate_measurement(ui, PaneId::Secondary, hidden_measurement_line());
+    set_pane_candidate_measurement(ui, PaneId::SECONDARY, hidden_measurement_line());
 }
 
 fn hidden_viewport_info() -> ViewportInfo {
@@ -3674,7 +3757,7 @@ fn pane_viewport_state(file: &OpenFile, pane: PaneId) -> Option<&ViewportState> 
         .map(|pane_state| &pane_state.viewport)
         .or(match pane {
             PaneId::Primary => Some(&file.viewport),
-            PaneId::Secondary => file.secondary_viewport.as_ref(),
+            PaneId::SECONDARY => file.secondary_viewport.as_ref(),
             _ => None,
         })
 }
