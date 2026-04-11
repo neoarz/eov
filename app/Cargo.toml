@@ -2,6 +2,12 @@
 name = "app"
 version = "0.1.0"
 edition = "2024"
+authors = ["Thomas Havlik <me@thavlik.dev>"]
+license = "MIT OR Apache-2.0"
+description = "Main application for the EOV project, providing a Slint user interface and integrating various functionalities from the common crate."
+keywords = ["application", "gui", "tool", "wsi", "biology", "pathology"]
+homepage = "https://github.com/eosin-platform/eov"
+publish = false
 
 [[bin]]
 name = "eov"
