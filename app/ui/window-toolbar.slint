@@ -243,12 +243,14 @@ export component WindowToolbar inherits Rectangle {
                 clicked => { root.window-close(); }
             }
 
-            Text {
-                text: "✕";
-                color: close-win-touch.has-hover ? white : Theme.text-primary;
-                font-size: 13px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            Path {
+                width: 10px;
+                height: 10px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                stroke: close-win-touch.has-hover ? white : Theme.text-primary;
+                stroke-width: 1.2px;
+                commands: "M 0 0 L 10 10 M 10 0 L 0 10";
             }
         }
     }
