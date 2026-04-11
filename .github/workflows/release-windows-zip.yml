@@ -1,4 +1,4 @@
-name: Release Windows Zip
+name: Windows
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Release AppImage
+name: AppImage
 
 on:
   workflow_dispatch:
