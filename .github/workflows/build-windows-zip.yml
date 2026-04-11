@@ -303,7 +303,7 @@ jobs:
           "$hash  ${{ steps.meta.outputs.artifact_name }}" | Set-Content "${{ steps.meta.outputs.checksum_name }}" -Encoding ASCII -NoNewline
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
           path: |
