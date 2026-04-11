@@ -152,7 +152,7 @@ Linux packaging assets live under `assets/linux/` and `packaging/`.
 Current packaging entry points:
 
 - `./packaging/appimage/build.sh`
-- `packaging/flatpak/io.eosin.eov.yml`
+- `./packaging/flatpak/build.sh`
 
 ## Running
 
