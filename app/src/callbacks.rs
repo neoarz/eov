@@ -21,9 +21,8 @@ use tracing::{error, info, warn};
 const ACTION_ZOOM_FACTOR: f64 = ZOOM_FACTOR * ZOOM_FACTOR;
 
 /// Query the cursor position in window-local physical pixels via X11.
-/// Returns `None` on non-X11 platforms or if the query fails.
 #[cfg(target_os = "linux")]
-fn query_x11_cursor_physical(ui: &AppWindow) -> Option<(f64, f64)> {
+fn query_dnd_cursor_physical(ui: &AppWindow) -> Option<(f64, f64)> {
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
     use slint::winit_030::WinitWindowAccessor;
 
@@ -69,14 +68,44 @@ fn query_x11_cursor_physical(ui: &AppWindow) -> Option<(f64, f64)> {
     })?
 }
 
-#[cfg(not(target_os = "linux"))]
-fn query_x11_cursor_physical(_ui: &AppWindow) -> Option<(f64, f64)> {
+/// Query the cursor position in window-local physical pixels via Win32 API.
+#[cfg(target_os = "windows")]
+fn query_dnd_cursor_physical(ui: &AppWindow) -> Option<(f64, f64)> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::winit_030::WinitWindowAccessor;
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    ui.window().with_winit_window(|w| {
+        let wh = w.window_handle().ok()?;
+        match wh.as_ref() {
+            RawWindowHandle::Win32(wh) => {
+                let hwnd = wh.hwnd.get() as isize;
+                unsafe {
+                    let mut pt = POINT { x: 0, y: 0 };
+                    if GetCursorPos(&mut pt) == 0 {
+                        return None;
+                    }
+                    if ScreenToClient(hwnd, &mut pt) == 0 {
+                        return None;
+                    }
+                    Some((pt.x as f64, pt.y as f64))
+                }
+            }
+            _ => None,
+        }
+    })?
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn query_dnd_cursor_physical(_ui: &AppWindow) -> Option<(f64, f64)> {
     None
 }
 
 /// Query cursor position during DnD and return logical coordinates.
 fn query_dnd_cursor_logical(ui: &AppWindow) -> Option<(f32, f32)> {
-    let (px, py) = query_x11_cursor_physical(ui)?;
+    let (px, py) = query_dnd_cursor_physical(ui)?;
     let scale = ui.window().scale_factor() as f64;
     Some(((px / scale) as f32, (py / scale) as f32))
 }
