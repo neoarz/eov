@@ -58,10 +58,12 @@ jobs:
             pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: |
-            cargo check --workspace --all-targets
-            cargo clippy --workspace --all-targets -- -D warnings
-            cargo test --workspace --all-targets
+      - name: Cargo Check
+        run: cargo check --workspace --all-targets
+      - name: Cargo Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cargo Test
+        run: cargo test --workspace --all-targets
 
   audit:
     name: Cargo Audit
