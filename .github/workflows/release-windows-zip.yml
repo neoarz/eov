@@ -61,7 +61,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -300,7 +300,7 @@ jobs:
 
       - name: Upload artifact (workflow_dispatch)
         if: steps.meta.outputs.is_release != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
           path: |
