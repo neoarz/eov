@@ -38,7 +38,7 @@ jobs:
       - run: actionlint
 
   check:
-    name: Cargo Check & Clippy
+    name: Cargo Check, Clippy, & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -61,29 +61,7 @@ jobs:
       - run: |
             cargo check --workspace --all-targets
             cargo clippy --workspace --all-targets -- -D warnings
-
-  test:
-    name: Cargo Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install system dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            libegl1-mesa-dev \
-            libfontconfig-dev \
-            libfreetype6-dev \
-            libopenslide-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxkbcommon-dev \
-            pkg-config
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-targets
+            cargo test --workspace --all-targets
 
   audit:
     name: Cargo Audit
