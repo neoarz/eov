@@ -113,10 +113,17 @@ jobs:
           tag="${GITHUB_REF_NAME}"
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # Manual run — use Cargo.toml version, skip tag validation
-            version="$cargo_version"
-            tag="v${version}"
-            echo "workflow_dispatch: using Cargo.toml version $version"
+            # Manual run — if dispatched on a version tag, treat it as a
+            # release; otherwise fall back to Cargo.toml version.
+            if [[ "$tag" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)([-+][0-9A-Za-z.-]+)?$ ]]; then
+              version="${tag#v}"
+              is_release="true"
+              echo "workflow_dispatch on tag: version $version (is_release=true)"
+            else
+              version="$cargo_version"
+              tag="v${version}"
+              echo "workflow_dispatch on branch: using Cargo.toml version $version"
+            fi
           else
             if [[ ! "$tag" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)([-+][0-9A-Za-z.-]+)?$ ]]; then
               echo "Tag '$tag' is not a supported version tag" >&2
