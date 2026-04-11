@@ -35,14 +35,14 @@ To make testing easier, here are a few (relatively) small WSI files that can be 
 There are two methods of installation: AppImage and Flatpak. The AppImage is directly executable:
 
 ```bash
-# Make it executable
-chmod +x eov-v0.1.21-linux-x86_64.AppImage
+# Make it executable (ensure correct filename!)
+chmod +x eov-v0.1.22-linux-x86_64.AppImage
 
 # Run it directly
-./eov-v0.1.21-linux-x86_64.AppImage
+./eov-v0.1.22-linux-x86_64.AppImage
 
 # Install it system-wide (optional)
-sudo mv eov-v0.1.21-linux-x86_64.AppImage /usr/local/bin/eov
+sudo mv eov-v0.1.22-linux-x86_64.AppImage /usr/local/bin/eov
 
 # Start the installed app with a nice, short command.
 eov
