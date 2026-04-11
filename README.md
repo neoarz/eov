@@ -131,6 +131,21 @@ Notable options:
 - `--max-tiles <COUNT>` to cap the number of cached tiles. Default and recommended value: `2048`.
 - `--config <PATH>` to override the active config file path for the current process
 
+## Configuration And Persistence
+
+eov currently persists two kinds of state:
+
+- Preferred render backend in `~/.eov/config.toml` by default.
+- Recently opened files in the directory under `~/.eov/recent_files.txt`.
+
+You can override the render-backend config path with the `EOV_CONFIG` environment variable.
+
+Example backend config:
+
+```toml
+render_backend = "gpu"
+```
+
 ## Architecture
 
 This repository is a Cargo workspace with two crates:
@@ -146,7 +161,9 @@ At a high level, the flow is:
 4. Load tiles in the background and cache them.
 5. Render the composed image through the selected backend.
 
-## Requirements
+## Building
+
+### Environment
 
 To **manually** build eov and run the binary, you need:
 
@@ -156,18 +173,24 @@ To **manually** build eov and run the binary, you need:
 
 On Linux, the most important dependency is usually OpenSlide itself. Depending on your distribution, you may also need the usual X11, Wayland, EGL, and font development packages used by Rust GUI applications.
 
-## Building
+### How to Build
 
 Build the release binary from the workspace root:
 
 ```bash
-cargo build --bin eov --release
+cargo build --bin eov
 ```
 
-For a development build:
+Build and run (for development):
 
 ```bash
-cargo build --bin eov
+cargo run --bin eov -- path/to/myfile.svs
+```
+
+For a release build:
+
+```bash
+cargo build --bin eov --release
 ```
 
 ## Packaging
@@ -182,21 +205,6 @@ Current packaging entry points:
 
 - `./packaging/appimage/build.sh`
 - `./packaging/flatpak/build.sh`
-
-## Configuration And Persistence
-
-eov currently persists two kinds of state:
-
-- Preferred render backend in `~/.eov/config.toml` by default.
-- Recently opened files in the XDG config directory under `~/.eov/recent_files.txt`.
-
-You can override the render-backend config path with the `EOV_CONFIG` environment variable.
-
-Example backend config:
-
-```toml
-render_backend = "gpu"
-```
 
 ## Repository Layout
 
