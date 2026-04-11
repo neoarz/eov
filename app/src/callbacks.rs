@@ -853,6 +853,59 @@ pub fn setup_callbacks(
         let render_timer = Rc::clone(&render_timer);
         let ui_weak = ui_weak.clone();
 
+        ui.on_os_file_drop(move |pane, side, path_str| {
+            let path = PathBuf::from(path_str.as_str());
+            if !path.exists() {
+                return;
+            }
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+
+            let target_pane = pane_from_index(pane);
+
+            if side == -1 {
+                // Drop in center: open as tab in the target pane
+                {
+                    let mut state = state_handle.write();
+                    state.set_focused_pane(target_pane);
+                }
+                ui.set_focused_pane(pane);
+                open_file(&ui, &state_handle, &tile_cache, &render_timer, path);
+            } else {
+                // Drop on edge: create a new pane split
+                let insert_index = if side == 0 {
+                    target_pane.0
+                } else {
+                    target_pane.0 + 1
+                };
+                let (new_pane, source_pane) = {
+                    let mut state = state_handle.write();
+                    let source = target_pane;
+                    let new_pane = state.insert_pane(insert_index);
+                    state.set_focused_pane(new_pane);
+                    state.request_render();
+                    (new_pane, source)
+                };
+                insert_pane_ui_state(new_pane, Some(source_pane));
+                {
+                    let state = state_handle.read();
+                    ui.set_split_enabled(state.split_enabled);
+                    ui.set_focused_pane(state.focused_pane.as_index());
+                    update_tabs(&ui, &state);
+                }
+                open_file(&ui, &state_handle, &tile_cache, &render_timer, path);
+            }
+            request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
         ui.on_tool_selected(move |tool_type| {
             if let Some(ui) = ui_weak.upgrade() {
                 {
@@ -1120,6 +1173,7 @@ pub fn setup_callbacks(
         let drag_press: Rc<Cell<Option<(f64, f64)>>> = Rc::new(Cell::new(None));
         let last_press_time = Rc::new(Cell::new(std::time::Instant::now()));
         let dbl_count = Rc::new(Cell::new(0u32));
+        let os_file_hovering = Rc::new(Cell::new(false));
 
         ui.window().on_winit_window_event({
             let last_cursor = Rc::clone(&last_cursor);
@@ -1127,6 +1181,7 @@ pub fn setup_callbacks(
             let drag_press = Rc::clone(&drag_press);
             let last_press_time = Rc::clone(&last_press_time);
             let dbl_count = Rc::clone(&dbl_count);
+            let os_file_hovering = Rc::clone(&os_file_hovering);
             let ui_weak = ui_weak.clone();
             let state_handle = Arc::clone(&state_handle);
             let tile_cache = Arc::clone(&tile_cache);
@@ -1231,6 +1286,15 @@ pub fn setup_callbacks(
                 winit::event::WindowEvent::CursorMoved { position, .. } => {
                     last_cursor.set((position.x, position.y));
 
+                    if os_file_hovering.get() {
+                        let scale = slint_window.scale_factor() as f64;
+                        let lx = position.x / scale;
+                        let ly = position.y / scale;
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.invoke_update_os_file_hover(lx as f32, ly as f32);
+                        }
+                    }
+
                     if let Some((px, py)) = drag_press.get() {
                         let dx = position.x - px;
                         let dy = position.y - py;
@@ -1302,6 +1366,35 @@ pub fn setup_callbacks(
                     ..
                 } => {
                     drag_press.set(None);
+                    EventResult::Propagate
+                }
+                winit::event::WindowEvent::HoveredFile(_path) => {
+                    os_file_hovering.set(true);
+                    let (cx, cy) = last_cursor.get();
+                    let scale = slint_window.scale_factor() as f64;
+                    let lx = cx / scale;
+                    let ly = cy / scale;
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.invoke_update_os_file_hover(lx as f32, ly as f32);
+                    }
+                    EventResult::Propagate
+                }
+                winit::event::WindowEvent::DroppedFile(path) => {
+                    os_file_hovering.set(false);
+                    if let Some(ui) = ui_weak.upgrade() {
+                        let pane = ui.get_os_file_hover_pane();
+                        let side = ui.get_os_file_hover_side();
+                        ui.invoke_clear_os_file_hover();
+                        let path_str = path.to_string_lossy().to_string();
+                        ui.invoke_os_file_drop(pane, side, SharedString::from(path_str));
+                    }
+                    EventResult::Propagate
+                }
+                winit::event::WindowEvent::HoveredFileCancelled => {
+                    os_file_hovering.set(false);
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.invoke_clear_os_file_hover();
+                    }
                     EventResult::Propagate
                 }
                 _ => EventResult::Propagate,

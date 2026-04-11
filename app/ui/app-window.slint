@@ -60,6 +60,8 @@ export component AppWindow inherits Window {
     in-out property <length> drag-abs-y: 0px;
     in-out property <int> drop-target-pane: -1;
     in-out property <int> split-drop-side: -1;
+    in-out property <int> os-file-hover-pane: -1;
+    in-out property <int> os-file-hover-side: -1;
     out property <float> content-area-width: content-area.width / 1px;
     out property <float> content-area-height: content-area.height / 1px;
     out property <float> viewport-width: split-enabled
@@ -134,6 +136,7 @@ export component AppWindow inherits Window {
     callback window-close();
     callback open-recent-menu-requested(length, length);
     callback context-menu-command(string);
+    callback os-file-drop(/* pane */ int, /* side: -1=center, 0=left, 1=right */ int, /* path */ string);
 
     property <length> toolbar-height: 40px;
     property <length> pane-gap: 6px;
@@ -162,6 +165,34 @@ export component AppWindow inherits Window {
                 self.split-drop-side = 1;
             }
         }
+    }
+
+    public function update-os-file-hover(abs-x: float, abs-y: float) {
+        if panes.length == 0 {
+            self.os-file-hover-pane = -1;
+            self.os-file-hover-side = -1;
+            return;
+        }
+
+        let raw-pane = Math.floor(abs-x * 1px / self.pane-stride);
+        self.os-file-hover-pane = Math.max(0, Math.min(self.panes.length - 1, raw-pane));
+        self.os-file-hover-side = -1;
+        let drop-top = (toolbar-height + 35px) / 1px;
+        let drop-bottom = self.height / 1px;
+        if abs-y >= drop-top && abs-y <= drop-bottom {
+            let local-x = abs-x - self.os-file-hover-pane * self.pane-stride / 1px;
+            let edge-width = self.pane-width / 1px * 0.20;
+            if local-x <= edge-width {
+                self.os-file-hover-side = 0;
+            } else if local-x >= self.pane-width / 1px - edge-width {
+                self.os-file-hover-side = 1;
+            }
+        }
+    }
+
+    public function clear-os-file-hover() {
+        self.os-file-hover-pane = -1;
+        self.os-file-hover-side = -1;
     }
 
     VerticalLayout {
@@ -207,6 +238,8 @@ export component AppWindow inherits Window {
                 drop-target-pane: root.drop-target-pane;
                 split-drop-side: root.split-drop-side;
                 drag-abs-x: root.drag-abs-x;
+                os-file-hover-pane: root.os-file-hover-pane;
+                os-file-hover-side: root.os-file-hover-side;
 
                 tab-activated(pane, id) => { root.tab-activated(pane, id); }
                 tab-close-requested(pane, id) => { root.tab-close-requested(pane, id); }

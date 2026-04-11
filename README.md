@@ -19,15 +19,35 @@ Whereas the sister project [Eosin](https://github.com/eosin-platform/eosin) solv
 The name `eov` has no canonical expansion.
 
 ## Installation
+
+Windows and Linux are currently supported. MacOS support is pending.
+
+Prebuilt binaries can be downloaded from the [Releases](https://github.com/eosin-platform/eov/releases) page.
+
+Both x86_64 and arm64 builds for all supported platforms are available. Make you sure you select the right architecture!
+
 ### Linux
-There are two methods of installation: AppImage and Flatpak.
+There are two methods of installation: AppImage and Flatpak. The AppImage is directly executable:
+
+```bash
+# Make it executable
+chmod +x eov-v0.1.17-linux-x86_64.AppImage
+
+# Run it directly
+./eov-v0.1.17-linux-x86_64.AppImage
+
+# Install it system-wide (optional)
+sudo mv eov-v0.1.17-linux-x86_64.AppImage /usr/local/bin/eov
+
+# Start the installed app with a nice, short command.
+eov
+```
 
 ### MacOS
 Prebuilt binaries are available via brew and direct download (TODO)
 
 ### Windows
-Tagged releases publish a Windows x86_64 zip to GitHub Releases automatically.
-The Windows bundle keeps OpenSlide as a separate DLL for LGPL-2.1 compliance.
+Tagged releases publish a Windows zip to GitHub Releases automatically. Run `eov.exe` within the zip to start the program. Only the portable version is available; no Windows installer is planned.
 
 ## Overview
 

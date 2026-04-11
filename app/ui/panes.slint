@@ -20,6 +20,8 @@ component PaneView inherits Rectangle {
     in property <length> drag-abs-x: -1px;
     in property <int> drop-target-pane: -1;
     in property <int> split-drop-side: -1;
+    in property <int> os-file-hover-pane: -1;
+    in property <int> os-file-hover-side: -1;
 
     callback tab-activated(int, int);
     callback tab-close-requested(int, int);
@@ -122,6 +124,54 @@ component PaneView inherits Rectangle {
         border-color: white;
     }
 
+    // OS file drag hover: center zone (no split) - subtle highlight
+    if root.os-file-hover-pane == root.pane-data.id && root.os-file-hover-side == -1: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        background: #3794ff15;
+        border-width: 2px;
+        border-color: #79b8ffff;
+    }
+
+    // OS file drag hover: split overlay (left or right)
+    if root.os-file-hover-pane == root.pane-data.id && root.os-file-hover-side != -1: Rectangle {
+        x: 0px;
+        y: 35px;
+        width: parent.width;
+        height: parent.height - 35px;
+        background: #0b122080;
+
+        Rectangle {
+            x: root.os-file-hover-side == 0 ? 10px : parent.width / 2 + 5px;
+            y: 10px;
+            width: parent.width / 2 - 15px;
+            height: parent.height - 20px;
+            border-radius: 8px;
+            background: #3794ff33;
+            border-width: 2px;
+            border-color: #79b8ffff;
+
+            Text {
+                text: root.os-file-hover-side == 0 ? "Open Left" : "Open Right";
+                color: white;
+                font-size: 18px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            x: parent.width / 2 - 1px;
+            y: 10px;
+            width: 2px;
+            height: parent.height - 20px;
+            background: #ffffff66;
+        }
+    }
+
     if root.dragging-tab-id != -1 && root.drop-target-pane == root.pane-data.id && root.split-drop-side != -1: Rectangle {
         x: 0px;
         y: 35px;
@@ -176,6 +226,8 @@ export component SplitPaneContainer inherits Rectangle {
     in property <int> drop-target-pane: -1;
     in property <int> split-drop-side: -1;
     in property <length> drag-abs-x: -1px;
+    in property <int> os-file-hover-pane: -1;
+    in property <int> os-file-hover-side: -1;
     in property <ToolType> current-tool: ToolType.navigate;
     property <length> pane-gap: 6px;
     property <int> pane-count: max(1, panes.length);
@@ -250,6 +302,8 @@ export component SplitPaneContainer inherits Rectangle {
             drag-abs-x: root.drag-abs-x;
             drop-target-pane: root.drop-target-pane;
             split-drop-side: root.split-drop-side;
+            os-file-hover-pane: root.os-file-hover-pane;
+            os-file-hover-side: root.os-file-hover-side;
 
             tab-activated(pane-id, id) => { root.tab-activated(pane-id, id); }
             tab-close-requested(pane-id, id) => { root.tab-close-requested(pane-id, id); }
