@@ -125,6 +125,21 @@ For a development build:
 cargo build --bin eov
 ```
 
+## Linux Packaging
+
+Linux packaging assets live under `assets/linux/` and `packaging/`.
+
+- AppImage is the first-class direct-download Linux artifact.
+- Flatpak support is included for sandboxed distribution.
+- OpenSlide remains dynamically linked on Linux for LGPL-2.1 compliance.
+- AppImage packaging bundles the OpenSlide shared library and required runtime
+    shared libraries into the AppDir/AppImage instead of statically linking it.
+
+Current packaging entry points:
+
+- `./packaging/appimage/build.sh`
+- `packaging/flatpak/io.eosin.eov.yml`
+
 ## Running
 
 Launch the viewer without opening a file:

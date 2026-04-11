@@ -72,7 +72,7 @@ slint::include_modules!();
 /// Frame rate for viewport updates
 const TARGET_FPS: f64 = 60.0;
 const FRAME_DURATION_MS: u64 = (1000.0 / TARGET_FPS) as u64;
-const APP_XDG_ID: &str = "eov";
+const APP_XDG_ID: &str = "io.eosin.eov";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 enum CliBackend {

@@ -9,3 +9,4 @@ notes.txt.*
 lean/.lake
 fixtures/
 .venv
+dist

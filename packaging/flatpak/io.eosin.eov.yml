@@ -1,0 +1,51 @@
+app-id: io.eosin.eov
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: eov
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/eov/cargo
+    CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+modules:
+  - name: openslide
+    buildsystem: meson
+    config-opts:
+      - -Dtest=false
+    sources:
+      - type: git
+        url: https://github.com/openslide/openslide.git
+        commit: 615670d924d6dddce3d407d1a6440a32cf5350c7
+    # If this project ever patches OpenSlide here, those patches must be made
+    # available to recipients under LGPL-2.1 terms.
+
+  - name: eov
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked --bin eov
+      - install -Dm755 target/release/eov /app/bin/eov
+      - install -Dm644 assets/linux/io.eosin.eov.desktop /app/share/applications/io.eosin.eov.desktop
+      - install -Dm644 assets/linux/io.eosin.eov.metainfo.xml /app/share/metainfo/io.eosin.eov.metainfo.xml
+      - install -Dm644 assets/linux/COPYING.third-party /app/share/doc/eov/COPYING.third-party
+      - install -Dm644 assets/linux/licenses/LGPL-2.1.txt /app/share/doc/eov/licenses/LGPL-2.1.txt
+      - install -Dm644 images/logo_256.png /app/share/icons/hicolor/256x256/apps/io.eosin.eov.png
+    sources:
+      - type: dir
+        path: ../../
+        skip:
+          - .git
+          - .venv
+          - dist
+          - target
+          - tmp
+    # OpenSlide is installed as a shared library module above and remains
+    # dynamically linked. Do not replace this with static linking.

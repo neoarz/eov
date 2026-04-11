@@ -1,0 +1,8 @@
+TODO: Replace this placeholder with the canonical GNU Lesser General Public
+License, version 2.1 text before shipping Linux artifacts.
+
+Suggested source:
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+
+This placeholder is intentional so license review can see that the canonical
+license text still needs to be checked in.
