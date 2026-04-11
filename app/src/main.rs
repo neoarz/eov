@@ -721,6 +721,22 @@ fn main() -> Result<()> {
 
     let ui = AppWindow::new()?;
     ui.set_use_native_window_controls(cfg!(target_os = "macos"));
+
+    // Apply CLI window size override. This must happen after AppWindow::new() so it
+    // takes priority over the preferred-width/preferred-height set in the .slint file.
+    {
+        let geom = launch_options.window_geometry;
+        if geom.width.is_some() || geom.height.is_some() {
+            let current = ui.window().size();
+            let scale = ui.window().scale_factor();
+            let current_logical = current.to_logical(scale);
+            let w = geom.width.unwrap_or(current_logical.width as u32);
+            let h = geom.height.unwrap_or(current_logical.height as u32);
+            ui.window()
+                .set_size(slint::LogicalSize::new(w as f32, h as f32));
+        }
+    }
+
     let ui_weak = ui.as_weak();
     let gpu_renderer = Rc::new(RefCell::new(GpuRenderer::new()));
     GpuRenderer::install(&ui, Rc::clone(&gpu_renderer))?;
