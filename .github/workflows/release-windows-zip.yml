@@ -99,6 +99,7 @@ jobs:
             ${{ matrix.msys2_prefix }}-sqlite3
             ${{ matrix.msys2_prefix }}-zlib
             ${{ matrix.msys2_prefix }}-ntldd
+            ${{ matrix.msys2_prefix }}-tools
             git
 
       - name: Derive release metadata
@@ -188,51 +189,61 @@ jobs:
           echo "Installed OpenSlide DLLs:"
           ls -la "$MSYSTEM_PREFIX"/bin/libopenslide*
 
-      - name: Generate MSVC import library for OpenSlide
+      # ---------------------------------------------------------------
+      # Generate an MSVC-compatible import library for OpenSlide.
+      #
+      # gendef (from mingw-w64-tools) reliably extracts DLL exports
+      # into a .def file.  MSVC lib.exe then creates the import
+      # library from that .def — guaranteed linker-compatible.
+      # ---------------------------------------------------------------
+      - name: Generate OpenSlide .def file
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          dll=$(find "$MSYSTEM_PREFIX/bin" -maxdepth 1 -name 'libopenslide-*.dll' -type f | head -1)
+          [[ -n "$dll" ]] || { echo "No OpenSlide DLL found in $MSYSTEM_PREFIX/bin" >&2; exit 1; }
+          echo "Generating .def from: $dll"
+
+          mkdir -p openslide-msvc
+          gendef - "$dll" > openslide-msvc/openslide.def
+
+          echo "=== openslide.def ==="
+          cat openslide-msvc/openslide.def
+
+          export_count=$(grep -c '^openslide_' openslide-msvc/openslide.def || true)
+          echo "Exports found: $export_count"
+          if [[ "$export_count" -lt 1 ]]; then
+            echo "ERROR: .def contains no openslide exports" >&2
+            exit 1
+          fi
+
+      - name: Create MSVC import library for OpenSlide
         shell: pwsh
         run: |
-          $msysPrefix = "${{ steps.openslide.outputs.msys_prefix }}"
+          $ErrorActionPreference = 'Stop'
+          $defPath = "openslide-msvc\openslide.def"
+          $libPath = "openslide-msvc\openslide.lib"
 
-          # Find the OpenSlide DLL
-          $dll = Get-ChildItem -Path "$msysPrefix\bin" -Filter "libopenslide*.dll" |
-              Where-Object { $_.Name -match '^libopenslide-\d+\.dll$' } |
-              Select-Object -First 1
+          # Create the import library that matches #[link(name = "openslide")]
+          lib /def:$defPath /out:$libPath /machine:${{ matrix.lib_machine }}
 
-          if (-not $dll) {
-            Write-Error "No OpenSlide DLL found in $msysPrefix\bin"
+          if (-not (Test-Path $libPath)) {
+            Write-Error "lib.exe failed to create $libPath"
             exit 1
           }
 
-          $dllName = $dll.Name
-          Write-Host "Found OpenSlide DLL: $dllName"
+          $size = (Get-Item $libPath).Length
+          Write-Host "Created $libPath ($size bytes)"
 
-          # Extract exports with dumpbin
-          $output = & dumpbin /exports $dll.FullName
-          $defLines = @("LIBRARY `"$dllName`"", "EXPORTS")
-          $inExportTable = $false
-
-          foreach ($line in $output) {
-            if ($line -match '^\s+ordinal\s+hint\s+RVA\s+name') {
-              $inExportTable = $true
-              continue
-            }
-            if ($inExportTable) {
-              if ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') {
-                $defLines += "  $($Matches[1])"
-              } elseif ($line.Trim() -eq '' -or $line -match '^\s+Summary') {
-                break
-              }
-            }
+          # Verify the import library contains expected symbols
+          $symbols = & dumpbin /linkermember:1 $libPath 2>&1 | Out-String
+          if ($symbols -notmatch 'openslide_') {
+            Write-Host "=== dumpbin /linkermember:1 ==="
+            Write-Host $symbols
+            Write-Error "Import library does not contain openslide symbols"
+            exit 1
           }
-
-          New-Item -ItemType Directory -Path openslide-msvc -Force | Out-Null
-          $defPath = "openslide-msvc\openslide.def"
-          $defLines -join "`n" | Set-Content $defPath -Encoding ASCII
-          Write-Host "Generated $defPath with $($defLines.Count - 2) exports"
-
-          # Create the import library that matches #[link(name = "openslide")]
-          lib /def:$defPath /out:openslide-msvc\openslide.lib /machine:${{ matrix.lib_machine }}
-          Write-Host "Created openslide-msvc\openslide.lib"
+          Write-Host "Verified: openslide symbols present in import library"
 
       - name: Build release binary
         shell: pwsh
