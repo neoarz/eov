@@ -20,8 +20,10 @@ jobs:
       - name: Check commit message for /noci
         id: check
         shell: bash
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]] && echo "${{ github.event.head_commit.message }}" | grep -qF '/noci'; then
+          if [[ "${{ github.event_name }}" == "push" ]] && echo "$COMMIT_MSG" | grep -qF '/noci'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
