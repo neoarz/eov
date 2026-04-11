@@ -123,6 +123,7 @@ jobs:
           meson install -C _build
 
       - name: Build OpenSlide from source
+        id: openslide
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -137,10 +138,15 @@ jobs:
           meson compile -C _build
           meson install -C _build
 
+          # Export the MSYS2 prefix as a Windows path for later steps
+          echo "msys_prefix=$(cygpath -w "$MSYSTEM_PREFIX")" >> "$GITHUB_OUTPUT"
+          echo "Installed OpenSlide DLLs:"
+          ls -la "$MSYSTEM_PREFIX"/bin/libopenslide*
+
       - name: Generate MSVC import library for OpenSlide
         shell: pwsh
         run: |
-          $msysPrefix = "C:\msys64\clang64"
+          $msysPrefix = "${{ steps.openslide.outputs.msys_prefix }}"
 
           # Find the OpenSlide DLL
           $dll = Get-ChildItem -Path "$msysPrefix\bin" -Filter "libopenslide*.dll" |
