@@ -14,7 +14,7 @@ The name `eov` has no canonical expansion.
 ## Installation
 ### Linux
 #### AppImage
-The AppImage release is currently pending integration with CI. (TODO)
+Tagged releases publish an AppImage to GitHub Releases automatically.
 
 #### flatpak
 (TODO)
