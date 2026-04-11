@@ -3,6 +3,11 @@
 <p align="center">
     <img src="images/eov.webp" width="256">
 </p>
+<p align="center">
+    <img src="images/screenshot.webp" width="512">
+    &nbsp;
+    <img src="images/screenshot-2.webp" width="512">
+</p>
 
 eov is a desktop viewer for whole-slide images built in Rust. It fills a niche in the WSI ecosystem: a small, higher-performance workbench for quickly viewing WSI files on your local machine. The feature scope is intentionally narrow with its design principle of "small Linux utility for WSI".
 
