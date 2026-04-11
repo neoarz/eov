@@ -59,6 +59,15 @@ fn toggle_minimap_visibility(ui: &AppWindow, state: &Arc<RwLock<AppState>>) {
     ui.set_show_minimap(show_minimap);
 }
 
+fn toggle_metadata_visibility(ui: &AppWindow, state: &Arc<RwLock<AppState>>) {
+    let show_metadata = {
+        let mut state = state.write();
+        state.toggle_metadata();
+        state.show_metadata
+    };
+    ui.set_show_metadata(show_metadata);
+}
+
 pub fn setup_callbacks(
     ui: &AppWindow,
     state: Arc<RwLock<AppState>>,
@@ -382,6 +391,20 @@ pub fn setup_callbacks(
         ui.on_toggle_minimap_requested(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 toggle_minimap_visibility(&ui, &state_handle);
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_toggle_metadata_requested(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                toggle_metadata_visibility(&ui, &state_handle);
                 request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
             }
         });

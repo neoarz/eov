@@ -4,6 +4,7 @@ import { Theme } from "theme.slint";
 import {
     ContextMenuItem,
     MeasurementLine,
+    MetadataItem,
     MinimapRect,
     PaneViewData,
     RecentFileData,
@@ -88,6 +89,7 @@ export component AppWindow inherits Window {
     in-out property <RenderMode> render-mode: RenderMode.cpu;
     in-out property <bool> gpu-rendering-available: false;
     in-out property <bool> show-minimap: true;
+    in-out property <bool> show-metadata: false;
 
     callback open-file-requested();
     callback new-tab-requested(int);
@@ -96,6 +98,7 @@ export component AppWindow inherits Window {
     callback zoom-in-requested();
     callback zoom-out-requested();
     callback toggle-minimap-requested();
+    callback toggle-metadata-requested();
     callback tab-activated(int, int);
     callback tab-close-requested(int, int);
     callback close-other-tabs(int, int);
@@ -167,12 +170,14 @@ export component AppWindow inherits Window {
             render-mode: root.render-mode;
             gpu-rendering-available: root.gpu-rendering-available;
             show-minimap: root.show-minimap;
+            show-metadata: root.show-metadata;
             open-file-requested => { root.open-file-requested(); }
             open-recent-menu-requested(x, y) => { root.open-recent-menu-requested(x, y); }
             frame-requested => { root.frame-requested(); }
             zoom-in-requested => { root.zoom-in-requested(); }
             zoom-out-requested => { root.zoom-out-requested(); }
             toggle-minimap-requested => { root.toggle-minimap-requested(); }
+            toggle-metadata-requested => { root.toggle-metadata-requested(); }
             tool-selected(tool) => { root.tool-selected(tool); }
             render-backend-selected(mode) => { root.render-backend-selected(mode); }
             window-minimize => { root.window-minimize(); }
@@ -188,6 +193,7 @@ export component AppWindow inherits Window {
                 panes: root.panes;
                 status-text: root.status-text;
                 show-minimap: root.show-minimap;
+                show-metadata: root.show-metadata;
                 split-enabled: root.split-enabled;
                 focused-pane: root.focused-pane;
                 current-tool: root.current-tool;

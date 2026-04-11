@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { MeasurementLine, MinimapRect, ROIRect, ToolType, ViewportInfo } from "types.slint";
+import { MeasurementLine, MetadataItem, MinimapRect, ROIRect, ToolType, ViewportInfo } from "types.slint";
 
 export component Minimap inherits Rectangle {
     in property <image> thumbnail;
@@ -156,12 +156,87 @@ export component ZoomSlider inherits Rectangle {
     }
 }
 
+export component MetadataHud inherits Rectangle {
+    in property <[MetadataItem]> items: [];
+
+    property <int> item-count: items.length;
+
+    width: 292px;
+    height: 52px + item-count * 22px;
+    background: #101419dd;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: #ffffff1a;
+    drop-shadow-blur: 16px;
+    drop-shadow-color: #00000070;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: 3px;
+        background: #4da3d9;
+        border-top-left-radius: parent.border-radius;
+        border-top-right-radius: parent.border-radius;
+    }
+
+    Text {
+        x: 16px;
+        y: 12px;
+        text: "Slide Metadata";
+        color: white;
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    Rectangle {
+        x: 16px;
+        y: 34px;
+        width: parent.width - 32px;
+        height: 1px;
+        background: #ffffff12;
+    }
+
+    for item[index] in root.items: Rectangle {
+        x: 16px;
+        y: 42px + index * 22px;
+        width: parent.width - 32px;
+        height: 18px;
+        background: transparent;
+
+        Text {
+            x: 0px;
+            y: 1px;
+            width: 78px;
+            text: item.label;
+            color: #8ea0b2;
+            font-size: 11px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            x: 86px;
+            y: 1px;
+            width: parent.width - 86px;
+            text: item.value;
+            color: #f3f6f8;
+            font-size: 11px;
+            font-weight: 500;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+}
+
 export component Viewport inherits Rectangle {
     in property <image> content;
     in property <ViewportInfo> viewport-info;
     in property <image> minimap-thumbnail;
     in property <MinimapRect> minimap-rect;
     in property <bool> show-minimap: true;
+    in property <[MetadataItem]> metadata-items: [];
+    in property <bool> show-metadata: false;
     in property <string> status-text: "";
     in property <bool> is-loading: false;
     in property <bool> debug-mode: false;
@@ -188,6 +263,7 @@ export component Viewport inherits Rectangle {
 
     out property <length> viewport-width: self.width;
     out property <length> viewport-height: self.height;
+    property <length> metadata-hud-height: show-metadata && metadata-items.length > 0 ? 52px + metadata-items.length * 22px : 0px;
 
     background: Theme.viewport-bg;
 
@@ -521,9 +597,15 @@ export component Viewport inherits Rectangle {
         value-changed(value) => { root.zoom-slider-changed(value); }
     }
 
+    if show-metadata && metadata-items.length > 0: MetadataHud {
+        x: parent.width - self.width - 16px;
+        y: 16px;
+        items: root.metadata-items;
+    }
+
     if debug-mode: Rectangle {
         x: parent.width - self.width - 8px;
-        y: 8px;
+        y: root.metadata-hud-height > 0px ? root.metadata-hud-height + 24px : 8px;
         width: 70px;
         height: 24px;
         background: #000000aa;

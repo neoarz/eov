@@ -64,6 +64,11 @@ export struct MeasurementLine {
     visible: bool,
 }
 
+export struct MetadataItem {
+    label: string,
+    value: string,
+}
+
 export struct PaneViewData {
     id: int,
     tabs: [TabData],
@@ -71,6 +76,7 @@ export struct PaneViewData {
     viewport-info: ViewportInfo,
     minimap-thumbnail: image,
     minimap-rect: MinimapRect,
+    metadata-items: [MetadataItem],
     is-home-tab: bool,
     zoom-slider-position: float,
     roi-rect: ROIRect,

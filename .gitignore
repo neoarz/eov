@@ -10,3 +10,5 @@ lean/.lake
 fixtures/
 .venv
 dist
+.flatpak-builder
+build

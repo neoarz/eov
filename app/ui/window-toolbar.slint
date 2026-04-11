@@ -1,12 +1,13 @@
 import { Theme } from "theme.slint";
 import { RenderMode, ToolType } from "types.slint";
-import { IconButton, MinimapToolButton, RoiToolButton, ToolButton } from "tab-controls.slint";
+import { IconButton, MetadataToolButton, MinimapToolButton, RoiToolButton, ToolButton } from "tab-controls.slint";
 
 export component WindowToolbar inherits Rectangle {
     in property <ToolType> current-tool: ToolType.navigate;
     in property <RenderMode> render-mode: RenderMode.cpu;
     in property <bool> gpu-rendering-available: false;
     in property <bool> show-minimap: true;
+    in property <bool> show-metadata: false;
 
     callback open-file-requested();
     callback open-recent-menu-requested(length, length);
@@ -14,6 +15,7 @@ export component WindowToolbar inherits Rectangle {
     callback zoom-in-requested();
     callback zoom-out-requested();
     callback toggle-minimap-requested();
+    callback toggle-metadata-requested();
     callback tool-selected(ToolType);
     callback render-backend-selected(RenderMode);
     callback window-minimize();
@@ -33,6 +35,7 @@ export component WindowToolbar inherits Rectangle {
         : measure-button.hovered ? measure-button.tooltip-text
         : cpu-button.hovered ? cpu-button.tooltip-text
         : gpu-button.hovered ? gpu-button.tooltip-text
+        : metadata-button.hovered ? metadata-button.tooltip-text
         : minimize-touch.has-hover ? "Minimize window"
         : maximize-touch.has-hover ? "Maximize window"
         : close-win-touch.has-hover ? "Close window"
@@ -48,6 +51,7 @@ export component WindowToolbar inherits Rectangle {
         : measure-button.hovered ? measure-button.absolute-position.x + measure-button.width / 2
         : cpu-button.hovered ? cpu-button.absolute-position.x + cpu-button.width / 2
         : gpu-button.hovered ? gpu-button.absolute-position.x + gpu-button.width / 2
+        : metadata-button.hovered ? metadata-button.absolute-position.x + metadata-button.width / 2
         : minimize-touch.has-hover ? minimize-control.absolute-position.x + minimize-control.width / 2
         : maximize-touch.has-hover ? maximize-control.absolute-position.x + maximize-control.width / 2
         : close-win-touch.has-hover ? close-control.absolute-position.x + close-control.width / 2
@@ -63,6 +67,7 @@ export component WindowToolbar inherits Rectangle {
         : measure-button.hovered ? measure-button.absolute-position.y + measure-button.height + 6px
         : cpu-button.hovered ? cpu-button.absolute-position.y + cpu-button.height + 6px
         : gpu-button.hovered ? gpu-button.absolute-position.y + gpu-button.height + 6px
+        : metadata-button.hovered ? metadata-button.absolute-position.y + metadata-button.height + 6px
         : minimize-touch.has-hover ? minimize-control.absolute-position.y + minimize-control.height + 6px
         : maximize-touch.has-hover ? maximize-control.absolute-position.y + maximize-control.height + 6px
         : close-win-touch.has-hover ? close-control.absolute-position.y + close-control.height + 6px
@@ -169,6 +174,12 @@ export component WindowToolbar inherits Rectangle {
                         root.render-backend-selected(RenderMode.gpu);
                     }
                 }
+            }
+
+            metadata-button := MetadataToolButton {
+                tooltip-text: "Toggle metadata HUD";
+                is-active: root.show-metadata;
+                clicked => { root.toggle-metadata-requested(); }
             }
         }
 

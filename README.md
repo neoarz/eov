@@ -1,4 +1,4 @@
-# eov — A tiny & fast WSI viewer
+# eov — A lightweight WSI viewer
 
 <p align="center">
     <img src="images/eov.webp" width="256">

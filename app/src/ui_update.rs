@@ -6,12 +6,101 @@
 use crate::state::{AppState, PaneId, RenderBackend};
 use crate::tools::{pane_overlay_data, pane_viewport_state};
 use crate::{
-    ContextMenuItem, MinimapRect, PaneRenderCacheEntry, PaneUiModels, PaneViewData, RecentFileData,
-    RenderMode, TabData, ViewportInfo,
+    ContextMenuItem, MetadataItem, MinimapRect, PaneRenderCacheEntry, PaneUiModels, PaneViewData,
+    RecentFileData, RenderMode, TabData, ViewportInfo,
 };
 use common::viewport::{MAX_ZOOM, MIN_ZOOM};
 use slint::{Image, Model, SharedString, VecModel};
 use std::rc::Rc;
+
+fn format_decimal(value: f64) -> String {
+    let mut formatted = format!("{value:.2}");
+    while formatted.contains('.') && formatted.ends_with('0') {
+        formatted.pop();
+    }
+    if formatted.ends_with('.') {
+        formatted.pop();
+    }
+    formatted
+}
+
+fn format_u64(value: u64) -> String {
+    let digits = value.to_string();
+    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index != 0 && index % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(ch);
+    }
+    formatted.chars().rev().collect()
+}
+
+fn build_metadata_items(
+    state: &AppState,
+    pane: PaneId,
+    viewport_info: &ViewportInfo,
+) -> Vec<MetadataItem> {
+    let Some(file_id) = state.active_file_id_for_pane(pane) else {
+        return Vec::new();
+    };
+    let Some(file) = state.get_file(file_id) else {
+        return Vec::new();
+    };
+
+    let properties = file.wsi.properties();
+    let vendor = properties.vendor.as_deref().unwrap_or("Unknown");
+    let objective = properties
+        .objective_power
+        .map(|value| format!("{}x", format_decimal(value)))
+        .unwrap_or_else(|| "N/A".to_string());
+    let mpp = properties
+        .mpp_x
+        .zip(properties.mpp_y)
+        .map(|(x, y)| format!("{} x {} µm/px", format_decimal(x), format_decimal(y)))
+        .unwrap_or_else(|| "N/A".to_string());
+    let scan_date = properties.scan_date.as_deref().unwrap_or("Unknown");
+    let levels = format!(
+        "{} levels | L{}",
+        properties.levels.len(),
+        viewport_info.level.max(0)
+    );
+
+    vec![
+        MetadataItem {
+            label: SharedString::from("Slide"),
+            value: SharedString::from(properties.filename.clone()),
+        },
+        MetadataItem {
+            label: SharedString::from("Dimensions"),
+            value: SharedString::from(format!(
+                "{} x {} px",
+                format_u64(properties.width),
+                format_u64(properties.height)
+            )),
+        },
+        MetadataItem {
+            label: SharedString::from("Pyramid"),
+            value: SharedString::from(levels),
+        },
+        MetadataItem {
+            label: SharedString::from("Vendor"),
+            value: SharedString::from(vendor),
+        },
+        MetadataItem {
+            label: SharedString::from("Objective"),
+            value: SharedString::from(objective),
+        },
+        MetadataItem {
+            label: SharedString::from("MPP"),
+            value: SharedString::from(mpp),
+        },
+        MetadataItem {
+            label: SharedString::from("Scan Date"),
+            value: SharedString::from(scan_date),
+        },
+    ]
+}
 
 /// Convert RenderBackend to UI RenderMode
 pub fn ui_render_mode(backend: RenderBackend) -> RenderMode {
@@ -57,6 +146,7 @@ pub fn pane_view_data_changed(existing: &PaneViewData, next: &PaneViewData) -> b
         || existing.viewport_info != next.viewport_info
         || existing.minimap_thumbnail != next.minimap_thumbnail
         || existing.minimap_rect != next.minimap_rect
+        || existing.metadata_items != next.metadata_items
         || existing.is_home_tab != next.is_home_tab
         || existing.zoom_slider_position != next.zoom_slider_position
         || existing.roi_rect != next.roi_rect
@@ -173,6 +263,8 @@ pub fn update_tabs(
                 zoom_slider_position = zoom_to_slider_value(vp.zoom);
             }
 
+            let metadata_items = build_metadata_items(state, pane, &viewport_info);
+
             let pane_ui = &pane_ui_models[pane_index];
             if !model_matches(&pane_ui.tabs, &tabs) {
                 pane_ui.tabs.set_vec(tabs.clone());
@@ -192,6 +284,7 @@ pub fn update_tabs(
                 viewport_info,
                 minimap_thumbnail: cached.minimap_thumbnail.unwrap_or_default(),
                 minimap_rect,
+                metadata_items: metadata_items.as_slice().into(),
                 is_home_tab: state.is_home_tab_active_in_pane(pane),
                 zoom_slider_position,
                 roi_rect,
@@ -238,6 +331,7 @@ pub fn update_tabs(
     ui.set_split_enabled(state.panes.len() > 1);
     ui.set_focused_pane(state.focused_pane.as_index());
     ui.set_show_minimap(state.show_minimap);
+    ui.set_show_metadata(state.show_metadata);
 }
 
 /// Update the recent files list in the UI

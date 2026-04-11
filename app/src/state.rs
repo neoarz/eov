@@ -370,6 +370,8 @@ pub struct AppState {
     pub gpu_backend_available: bool,
     /// Whether the minimap/zoom controls are shown in viewports
     pub show_minimap: bool,
+    /// Whether the metadata HUD is shown in viewports
+    pub show_metadata: bool,
     /// Whether a new frame should be rendered as soon as possible
     pub needs_render: bool,
     /// Whether the render loop timer is currently running
@@ -403,6 +405,7 @@ impl AppState {
             render_backend: RenderBackend::Cpu,
             gpu_backend_available: false,
             show_minimap: true,
+            show_metadata: false,
             needs_render: true,
             render_loop_running: false,
         }
@@ -1098,6 +1101,11 @@ impl AppState {
 
     pub fn toggle_minimap(&mut self) {
         self.show_minimap = !self.show_minimap;
+        self.needs_render = true;
+    }
+
+    pub fn toggle_metadata(&mut self) {
+        self.show_metadata = !self.show_metadata;
         self.needs_render = true;
     }
 
