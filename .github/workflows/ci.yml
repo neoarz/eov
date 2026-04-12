@@ -139,8 +139,10 @@ jobs:
         run: |
           set -euo pipefail
           bash -n packaging/appimage/build.sh
+          bash -n packaging/macos/build.sh
           bash -n packaging/flatpak/build.sh
           test -f packaging/appimage/AppRun
+          test -f assets/macos/Info.plist
           test -f assets/linux/io.eosin.eov.desktop
           test -f assets/linux/io.eosin.eov.metainfo.xml
           test -d assets/linux/licenses
