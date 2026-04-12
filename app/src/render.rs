@@ -805,6 +805,7 @@ fn render_pane_to_image(
     blitter::fast_fill_rgba(buffer, 30, 30, 30, 255);
 
     // Helper: blit all fallback + fine tiles into a buffer with a given blit function
+    #[allow(clippy::type_complexity)]
     let blit_all_tiles =
         |buf: &mut [u8], blit_fn: fn(&mut [u8], u32, u32, &[u8], u32, u32, i32, i32, i32, i32)| {
             for (fallback_tile, sx, sy, sw, sh) in &fallback_blits {
@@ -1086,6 +1087,7 @@ fn coarse_blend_for_tile(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tile_draw_from_tile(
     vp: &Viewport,
     bounds_left: f64,
