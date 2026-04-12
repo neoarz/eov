@@ -52,10 +52,17 @@ export component HomeScreen inherits Rectangle {
                         alignment: center;
                         spacing: 8px;
 
-                        Text {
-                            text: "📂";
-                            font-size: 16px;
-                            vertical-alignment: center;
+                        Rectangle {
+                            width: 18px;
+
+                            Image {
+                                x: 0;
+                                y: (parent.height - self.height) / 2;
+                                width: parent.width;
+                                height: 18px;
+                                source: @image-url("open-file.svg");
+                                image-fit: contain;
+                            }
                         }
 
                         Text {

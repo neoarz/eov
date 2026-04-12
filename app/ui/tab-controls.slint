@@ -115,15 +115,14 @@ export component OpenFileToolButton inherits Rectangle {
         }
     }
 
-    HorizontalLayout {
-        alignment: center;
-
-        Text {
-            text: "📂";
-            font-size: 14px;
-            vertical-alignment: center;
-            opacity: root.enabled ? 1.0 : 0.45;
-        }
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 17px;
+        height: 17px;
+        source: @image-url("open-file.svg");
+        image-fit: contain;
+        opacity: root.enabled ? 1.0 : 0.45;
     }
 }
 

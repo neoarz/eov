@@ -786,7 +786,8 @@ fn render_pane_to_image(
         return PaneRenderOutcome::default();
     };
     // Render directly into SharedPixelBuffer to avoid an intermediate copy.
-    let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(render_width, render_height);
+    let mut pixel_buffer =
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(render_width, render_height);
     let buffer = pixel_buffer.make_mut_bytes();
     blitter::fast_fill_rgba(buffer, 30, 30, 30, 255);
 
