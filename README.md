@@ -22,9 +22,7 @@ The name `eov` has no canonical expansion.
 
 ## Installation
 
-Windows and Linux are currently supported. MacOS support is pending.
-
-Prebuilt binaries can be downloaded from the [Releases](https://github.com/eosin-platform/eov/releases) page.
+Windows, MacOS, and Linux are supported. Prebuilt binaries can be downloaded from the [Releases](https://github.com/eosin-platform/eov/releases) page.
 
 Both x86_64 and arm64 builds for all supported platforms are available. Make you sure you select the right architecture!
 
