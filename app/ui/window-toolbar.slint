@@ -202,20 +202,13 @@ export component WindowToolbar inherits Rectangle {
 
             Rectangle {
                 height: 28px;
-                width: filter-label.preferred-width + 6px + filter-combo-area.width + 4px;
+                width: filter-combo-area.width + 4px;
                 border-radius: 3px;
 
                 HorizontalLayout {
                     spacing: 4px;
                     padding-left: 3px;
                     padding-right: 3px;
-
-                    filter-label := Text {
-                        text: "Filtering";
-                        color: Theme.text-secondary;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
 
                     filter-combo-area := Rectangle {
                         width: 90px;

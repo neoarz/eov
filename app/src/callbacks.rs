@@ -504,6 +504,20 @@ pub fn setup_callbacks(
                 RenderMode::Cpu => RenderBackend::Cpu,
                 RenderMode::Gpu => RenderBackend::Gpu,
             };
+
+            // If switching to CPU while Lanczos is active, show confirmation dialog
+            let has_lanczos = {
+                let state = state_handle.read();
+                matches!(state.filtering_mode, FilteringMode::Lanczos3)
+            };
+            if backend == RenderBackend::Cpu && has_lanczos {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_lanczos_confirm_from_backend_switch(true);
+                    ui.set_lanczos_confirm_visible(true);
+                }
+                return;
+            }
+
             let gpu_fallback = {
                 let mut state = state_handle.write();
                 state.select_render_backend(backend);
@@ -562,7 +576,7 @@ pub fn setup_callbacks(
         });
     }
 
-    // Lanczos confirmation dialog accepted
+    // Lanczos confirmation dialog accepted — keep Lanczos on CPU
     {
         let state_handle = Arc::clone(&state);
         let tile_cache = Arc::clone(&tile_cache);
@@ -570,8 +584,64 @@ pub fn setup_callbacks(
         let ui_weak = ui_weak.clone();
 
         ui.on_lanczos_confirm_accepted(move || {
+            let from_backend_switch = ui_weak
+                .upgrade()
+                .map(|ui| ui.get_lanczos_confirm_from_backend_switch())
+                .unwrap_or(false);
+
+            if from_backend_switch {
+                // Switch to CPU and keep Lanczos
+                {
+                    let mut state = state_handle.write();
+                    state.select_render_backend(RenderBackend::Cpu);
+                    if let Err(err) = config::save_render_backend(state.render_backend) {
+                        warn!("Failed to save render backend config: {}", err);
+                    }
+                }
+                if let Some(ui) = ui_weak.upgrade() {
+                    let state = state_handle.read();
+                    update_render_backend(&ui, &state);
+                }
+                if let Some(ui) = ui_weak.upgrade() {
+                    request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+                }
+            } else {
+                apply_filtering_mode(
+                    &state_handle, &tile_cache, &render_timer, &ui_weak, FilteringMode::Lanczos3,
+                );
+            }
+        });
+    }
+
+    // Lanczos confirmation dialog — use trilinear instead
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_lanczos_confirm_use_trilinear(move || {
+            let from_backend_switch = ui_weak
+                .upgrade()
+                .map(|ui| ui.get_lanczos_confirm_from_backend_switch())
+                .unwrap_or(false);
+
+            if from_backend_switch {
+                // Switch to CPU and change filtering to Trilinear
+                {
+                    let mut state = state_handle.write();
+                    state.select_render_backend(RenderBackend::Cpu);
+                    if let Err(err) = config::save_render_backend(state.render_backend) {
+                        warn!("Failed to save render backend config: {}", err);
+                    }
+                }
+                if let Some(ui) = ui_weak.upgrade() {
+                    let state = state_handle.read();
+                    update_render_backend(&ui, &state);
+                }
+            }
             apply_filtering_mode(
-                &state_handle, &tile_cache, &render_timer, &ui_weak, FilteringMode::Lanczos3,
+                &state_handle, &tile_cache, &render_timer, &ui_weak, FilteringMode::Trilinear,
             );
         });
     }
@@ -582,10 +652,21 @@ pub fn setup_callbacks(
         let ui_weak = ui_weak.clone();
 
         ui.on_lanczos_confirm_cancelled(move || {
-            // Revert combobox to current mode
+            let from_backend_switch = ui_weak
+                .upgrade()
+                .map(|ui| ui.get_lanczos_confirm_from_backend_switch())
+                .unwrap_or(false);
+
             if let Some(ui) = ui_weak.upgrade() {
-                let state = state_handle.read();
-                update_filtering_mode(&ui, &state);
+                if from_backend_switch {
+                    // Revert backend combobox (stay on GPU)
+                    let state = state_handle.read();
+                    update_render_backend(&ui, &state);
+                } else {
+                    // Revert filtering combobox
+                    let state = state_handle.read();
+                    update_filtering_mode(&ui, &state);
+                }
             }
         });
     }

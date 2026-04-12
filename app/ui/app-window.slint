@@ -82,9 +82,11 @@ export component AppWindow inherits Window {
 
     in-out property <bool> filter-popup-visible: false;
     in-out property <bool> lanczos-confirm-visible: false;
+    in-out property <bool> lanczos-confirm-from-backend-switch: false;
 
     callback lanczos-confirm-accepted();
     callback lanczos-confirm-cancelled();
+    callback lanczos-confirm-use-trilinear();
 
     in-out property <ToolType> current-tool: ToolType.navigate;
     in-out property <ROIRect> primary-roi-rect: { x: 0, y: 0, width: 0, height: 0, visible: false };
@@ -556,14 +558,15 @@ export component AppWindow inherits Window {
             clicked => {
                 root.lanczos-confirm-visible = false;
                 root.lanczos-confirm-cancelled();
+                root.lanczos-confirm-from-backend-switch = false;
             }
         }
 
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 380px;
-            height: 180px;
+            width: 420px;
+            height: 200px;
             background: Theme.surface;
             border-radius: 8px;
             border-width: 1px;
@@ -585,7 +588,7 @@ export component AppWindow inherits Window {
                 }
 
                 Text {
-                    text: "Lanczos-3 filtering on the CPU renderer is very slow and will significantly degrade rendering performance.\n\nAre you sure you want to enable it?";
+                    text: "Lanczos-3 filtering on the CPU renderer is very slow and will significantly degrade rendering performance. It is highly recommended to use Trilinear filtering on CPU.\n\nAre you sure you want to enable it?";
                     color: Theme.text-secondary;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -610,11 +613,37 @@ export component AppWindow inherits Window {
                             clicked => {
                                 root.lanczos-confirm-visible = false;
                                 root.lanczos-confirm-cancelled();
+                                root.lanczos-confirm-from-backend-switch = false;
                             }
                         }
 
                         Text {
                             text: "Cancel";
+                            color: Theme.text-primary;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        min-width: use-trilinear-text.preferred-width + 16px;
+                        height: 28px;
+                        border-radius: 4px;
+                        background: use-trilinear-touch.has-hover ? Theme.surface-hover : Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        use-trilinear-touch := TouchArea {
+                            clicked => {
+                                root.lanczos-confirm-visible = false;
+                                root.lanczos-confirm-use-trilinear();
+                                root.lanczos-confirm-from-backend-switch = false;
+                            }
+                        }
+
+                        use-trilinear-text := Text {
+                            text: "Use Trilinear";
                             color: Theme.text-primary;
                             font-size: 12px;
                             horizontal-alignment: center;
@@ -632,6 +661,7 @@ export component AppWindow inherits Window {
                             clicked => {
                                 root.lanczos-confirm-visible = false;
                                 root.lanczos-confirm-accepted();
+                                root.lanczos-confirm-from-backend-switch = false;
                             }
                         }
 
