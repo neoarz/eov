@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { PaneViewData, RecentFileData, ToolType } from "types.slint";
+import { MeasurementUnit, PaneViewData, RecentFileData, ToolType } from "types.slint";
 import { HomeScreen } from "home-screen.slint";
 import { TabBar } from "tab-controls.slint";
 import { Viewport } from "viewport.slint";
@@ -47,6 +47,14 @@ component PaneView inherits Rectangle {
     callback cancel-tool();
     callback close-active-tab();
     callback tab-tooltip-changed(bool, string, length, length);
+    callback hud-toggle-scale-bar(int);
+    callback hud-toggle-dropdown(int);
+    callback hud-gamma-changed(int, float);
+    callback hud-brightness-changed(int, float);
+    callback hud-contrast-changed(int, float);
+    callback hud-measurement-unit-changed(int, MeasurementUnit);
+    callback hud-reset-adjustments(int);
+    callback hud-zoom-input(int, float);
 
     border-width: 0px;
     border-color: transparent;
@@ -98,6 +106,7 @@ component PaneView inherits Rectangle {
                 debug-mode: root.debug-mode;
                 fps: root.fps;
                 zoom-slider-position: root.pane-data.zoom-slider-position;
+                hud: root.pane-data.hud;
 
                 pan(dx, dy) => { root.pane-focused(root.pane-data.id); root.viewport-pan(dx, dy); }
                 zoom(f, x, y) => { root.pane-focused(root.pane-data.id); root.viewport-zoom(f, x, y); }
@@ -112,6 +121,14 @@ component PaneView inherits Rectangle {
                 tool-mouse-up(x, y) => { root.tool-mouse-up(x, y); }
                 cancel-tool => { root.cancel-tool(); }
                 close-tab => { root.close-active-tab(); }
+                hud-toggle-scale-bar => { root.pane-focused(root.pane-data.id); root.hud-toggle-scale-bar(root.pane-data.id); }
+                hud-toggle-dropdown => { root.pane-focused(root.pane-data.id); root.hud-toggle-dropdown(root.pane-data.id); }
+                hud-gamma-changed(v) => { root.pane-focused(root.pane-data.id); root.hud-gamma-changed(root.pane-data.id, v); }
+                hud-brightness-changed(v) => { root.pane-focused(root.pane-data.id); root.hud-brightness-changed(root.pane-data.id, v); }
+                hud-contrast-changed(v) => { root.pane-focused(root.pane-data.id); root.hud-contrast-changed(root.pane-data.id, v); }
+                hud-measurement-unit-changed(u) => { root.pane-focused(root.pane-data.id); root.hud-measurement-unit-changed(root.pane-data.id, u); }
+                hud-reset-adjustments => { root.pane-focused(root.pane-data.id); root.hud-reset-adjustments(root.pane-data.id); }
+                hud-zoom-input(v) => { root.pane-focused(root.pane-data.id); root.hud-zoom-input(root.pane-data.id, v); }
             }
         }
     }
@@ -281,6 +298,14 @@ export component SplitPaneContainer inherits Rectangle {
     callback cancel-tool();
     callback close-active-tab();
     callback tab-tooltip-changed(bool, string, length, length);
+    callback hud-toggle-scale-bar(int);
+    callback hud-toggle-dropdown(int);
+    callback hud-gamma-changed(int, float);
+    callback hud-brightness-changed(int, float);
+    callback hud-contrast-changed(int, float);
+    callback hud-measurement-unit-changed(int, MeasurementUnit);
+    callback hud-reset-adjustments(int);
+    callback hud-zoom-input(int, float);
 
     background: Theme.background;
 
@@ -332,6 +357,14 @@ export component SplitPaneContainer inherits Rectangle {
             cancel-tool => { root.cancel-tool(); }
             close-active-tab => { root.close-active-tab(); }
             tab-tooltip-changed(visible, text, cx, ty) => { root.tab-tooltip-changed(visible, text, cx, ty); }
+            hud-toggle-scale-bar(pane-id) => { root.hud-toggle-scale-bar(pane-id); }
+            hud-toggle-dropdown(pane-id) => { root.hud-toggle-dropdown(pane-id); }
+            hud-gamma-changed(pane-id, v) => { root.hud-gamma-changed(pane-id, v); }
+            hud-brightness-changed(pane-id, v) => { root.hud-brightness-changed(pane-id, v); }
+            hud-contrast-changed(pane-id, v) => { root.hud-contrast-changed(pane-id, v); }
+            hud-measurement-unit-changed(pane-id, u) => { root.hud-measurement-unit-changed(pane-id, u); }
+            hud-reset-adjustments(pane-id) => { root.hud-reset-adjustments(pane-id); }
+            hud-zoom-input(pane-id, v) => { root.hud-zoom-input(pane-id, v); }
         }
     }
 }

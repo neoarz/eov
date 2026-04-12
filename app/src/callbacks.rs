@@ -1,7 +1,8 @@
 use crate::config;
-use crate::state::{self, AppState, FilteringMode, PaneId, RenderBackend};
+use crate::state::{self, AppState, FilteringMode, HudSettings, MeasurementUnit, PaneId, RenderBackend};
 use crate::{
-    AppWindow, FilteringMode as SlintFilteringMode, RenderMode, ToolType, build_recent_menu_items,
+    AppWindow, FilteringMode as SlintFilteringMode, MeasurementUnit as SlintMeasurementUnit,
+    RenderMode, ToolType, build_recent_menu_items,
     copy_text_to_clipboard, handle_tool_mouse_down, handle_tool_mouse_move, handle_tool_mouse_up,
     insert_pane_ui_state, open_file, pane_from_index, refresh_tab_ui, request_render_loop,
     slider_value_to_zoom, update_filtering_mode, update_render_backend, update_tabs,
@@ -22,6 +23,22 @@ use tracing::{error, info, warn};
 const ACTION_ZOOM_FACTOR: f64 = ZOOM_FACTOR * ZOOM_FACTOR;
 #[cfg(target_os = "macos")]
 const MACOS_TOOLBAR_HEIGHT: f64 = 40.0;
+
+fn active_hud_mut(state: &mut AppState) -> Option<&mut HudSettings> {
+    let pane = state.focused_pane;
+    let file_id = state.active_file_id_for_pane(pane)?;
+    let file = state.get_file_mut(file_id)?;
+    let pane_state = file.pane_state_mut(pane)?;
+    Some(&mut pane_state.hud)
+}
+
+fn measurement_unit_from_slint(unit: SlintMeasurementUnit) -> MeasurementUnit {
+    match unit {
+        SlintMeasurementUnit::Um => MeasurementUnit::Um,
+        SlintMeasurementUnit::Mm => MeasurementUnit::Mm,
+        SlintMeasurementUnit::Inches => MeasurementUnit::Inches,
+    }
+}
 
 /// Query the cursor position in window-local physical pixels via X11.
 #[cfg(target_os = "linux")]
@@ -1487,6 +1504,169 @@ pub fn setup_callbacks(
                 let state = state_handle.read();
                 refresh_tab_ui(&ui, &state);
                 ui.invoke_focus_keyboard();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    // HUD callbacks
+    {
+        let state_handle = Arc::clone(&state);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_toggle_scale_bar(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.show_scale_bar = !hud.show_scale_bar;
+                }
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                let state = state_handle.read();
+                update_tabs(&ui, &state);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_toggle_dropdown(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.hud_dropdown_open = !hud.hud_dropdown_open;
+                }
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                let state = state_handle.read();
+                update_tabs(&ui, &state);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_gamma_changed(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.gamma = value;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_brightness_changed(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.brightness = value;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_contrast_changed(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.contrast = value;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_measurement_unit_changed(move |pane, unit| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.measurement_unit = measurement_unit_from_slint(unit);
+                }
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                let state = state_handle.read();
+                update_tabs(&ui, &state);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_reset_adjustments(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.reset_adjustments();
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_zoom_input(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(viewport) = state.active_viewport_mut() {
+                    viewport.zoom_to(value as f64);
+                }
+                state.request_render();
             }
             if let Some(ui) = ui_weak.upgrade() {
                 request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);

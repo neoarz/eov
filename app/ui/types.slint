@@ -69,6 +69,24 @@ export struct MetadataItem {
     value: string,
 }
 
+export enum MeasurementUnit {
+    um,
+    mm,
+    inches,
+}
+
+export struct HudSettings {
+    show-scale-bar: bool,
+    show-hud-toolbar: bool,
+    hud-dropdown-open: bool,
+    gamma: float,
+    brightness: float,
+    contrast: float,
+    measurement-unit: MeasurementUnit,
+    mpp-x: float,
+    mpp-y: float,
+}
+
 export struct PaneViewData {
     id: int,
     tabs: [TabData],
@@ -83,6 +101,7 @@ export struct PaneViewData {
     measurements: [MeasurementLine],
     candidate-measurement: MeasurementLine,
     is-loading: bool,
+    hud: HudSettings,
 }
 
 export enum ToolType {

@@ -3,10 +3,12 @@
 //! This module contains functions for updating UI elements like tabs,
 //! recent files, and render backend settings.
 
-use crate::state::{AppState, FilteringMode, PaneId, RenderBackend};
+use crate::state::{AppState, FilteringMode, HudSettings, MeasurementUnit, PaneId, RenderBackend};
 use crate::tools::{pane_overlay_data, pane_viewport_state};
 use crate::{
-    ContextMenuItem, FilteringMode as SlintFilteringMode, MetadataItem, MinimapRect,
+    ContextMenuItem, FilteringMode as SlintFilteringMode,
+    HudSettings as SlintHudSettings, MeasurementUnit as SlintMeasurementUnit,
+    MetadataItem, MinimapRect,
     PaneRenderCacheEntry, PaneUiModels, PaneViewData, RecentFileData, RenderMode, TabData,
     ViewportInfo,
 };
@@ -175,6 +177,7 @@ pub fn pane_view_data_changed(existing: &PaneViewData, next: &PaneViewData) -> b
         || existing.roi_rect != next.roi_rect
         || existing.candidate_measurement != next.candidate_measurement
         || existing.is_loading != next.is_loading
+        || existing.hud != next.hud
 }
 
 /// Create a hidden viewport info (default values)
@@ -288,6 +291,20 @@ pub fn update_tabs(
 
             let metadata_items = build_metadata_items(state, pane, &viewport_info);
 
+            // Build HUD settings from per-pane state
+            let hud = if let Some(file_id) = state.active_file_id_for_pane(pane)
+                && let Some(file) = state.get_file(file_id)
+            {
+                let props = file.wsi.properties();
+                let mpp_x = props.mpp_x.unwrap_or(0.0) as f32;
+                let mpp_y = props.mpp_y.unwrap_or(0.0) as f32;
+                file.pane_state(pane)
+                    .map(|ps| ui_hud_settings(&ps.hud, mpp_x, mpp_y))
+                    .unwrap_or_default()
+            } else {
+                SlintHudSettings::default()
+            };
+
             let pane_ui = &pane_ui_models[pane_index];
             if !model_matches(&pane_ui.tabs, &tabs) {
                 pane_ui.tabs.set_vec(tabs.clone());
@@ -314,6 +331,7 @@ pub fn update_tabs(
                 measurements: pane_ui.measurements.clone().into(),
                 candidate_measurement,
                 is_loading: ui.get_is_loading() && pane == state.focused_pane,
+                hud,
             }
         })
         .collect();
@@ -411,6 +429,30 @@ pub fn ui_filtering_mode(mode: FilteringMode) -> SlintFilteringMode {
         FilteringMode::Bilinear => SlintFilteringMode::Bilinear,
         FilteringMode::Trilinear => SlintFilteringMode::Trilinear,
         FilteringMode::Lanczos3 => SlintFilteringMode::Lanczos3,
+    }
+}
+
+/// Convert MeasurementUnit to Slint MeasurementUnit
+fn ui_measurement_unit(unit: MeasurementUnit) -> SlintMeasurementUnit {
+    match unit {
+        MeasurementUnit::Um => SlintMeasurementUnit::Um,
+        MeasurementUnit::Mm => SlintMeasurementUnit::Mm,
+        MeasurementUnit::Inches => SlintMeasurementUnit::Inches,
+    }
+}
+
+/// Convert HudSettings to Slint HudSettings
+fn ui_hud_settings(hud: &HudSettings, mpp_x: f32, mpp_y: f32) -> SlintHudSettings {
+    SlintHudSettings {
+        show_scale_bar: hud.show_scale_bar,
+        show_hud_toolbar: hud.show_hud_toolbar,
+        hud_dropdown_open: hud.hud_dropdown_open,
+        gamma: hud.gamma,
+        brightness: hud.brightness,
+        contrast: hud.contrast,
+        measurement_unit: ui_measurement_unit(hud.measurement_unit),
+        mpp_x,
+        mpp_y,
     }
 }
 

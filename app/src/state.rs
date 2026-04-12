@@ -32,6 +32,59 @@ pub enum FilteringMode {
     Lanczos3,
 }
 
+/// Measurement unit for scale bar and measurements
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MeasurementUnit {
+    /// Micrometers (µm)
+    #[default]
+    Um,
+    /// Millimeters (mm)
+    Mm,
+    /// Inches
+    Inches,
+}
+
+/// Per-tab HUD settings
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HudSettings {
+    pub show_scale_bar: bool,
+    pub show_hud_toolbar: bool,
+    pub hud_dropdown_open: bool,
+    pub gamma: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub measurement_unit: MeasurementUnit,
+}
+
+impl Default for HudSettings {
+    fn default() -> Self {
+        Self {
+            show_scale_bar: true,
+            show_hud_toolbar: true,
+            hud_dropdown_open: false,
+            gamma: 1.0,
+            brightness: 0.0,
+            contrast: 1.0,
+            measurement_unit: MeasurementUnit::Um,
+        }
+    }
+}
+
+impl HudSettings {
+    pub fn reset_adjustments(&mut self) {
+        self.gamma = 1.0;
+        self.brightness = 0.0;
+        self.contrast = 1.0;
+    }
+
+    #[allow(dead_code)]
+    pub fn has_adjustments(&self) -> bool {
+        (self.gamma - 1.0).abs() > 0.001
+            || self.brightness.abs() > 0.001
+            || (self.contrast - 1.0).abs() > 0.001
+    }
+}
+
 /// Maximum number of recently opened files to track
 const MAX_RECENT_FILES: usize = 10;
 
@@ -288,6 +341,7 @@ pub struct FilePaneState {
     pub last_render_time: std::time::Instant,
     pub last_seen_tile_epoch: u64,
     pub last_request: Option<TileRequestSignature>,
+    pub hud: HudSettings,
 }
 
 impl FilePaneState {
@@ -306,6 +360,7 @@ impl FilePaneState {
             last_render_time: std::time::Instant::now(),
             last_seen_tile_epoch: 0,
             last_request: None,
+            hud: HudSettings::default(),
         }
     }
 

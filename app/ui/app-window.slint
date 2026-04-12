@@ -5,6 +5,7 @@ import {
     ContextMenuItem,
     FilteringMode,
     MeasurementLine,
+    MeasurementUnit,
     MetadataItem,
     MinimapRect,
     PaneViewData,
@@ -147,6 +148,14 @@ export component AppWindow inherits Window {
     callback open-recent-menu-requested(length, length);
     callback context-menu-command(string);
     callback os-file-drop(/* pane */ int, /* side: -1=center, 0=left, 1=right */ int, /* path */ string);
+    callback hud-toggle-scale-bar(int);
+    callback hud-toggle-dropdown(int);
+    callback hud-gamma-changed(int, float);
+    callback hud-brightness-changed(int, float);
+    callback hud-contrast-changed(int, float);
+    callback hud-measurement-unit-changed(int, MeasurementUnit);
+    callback hud-reset-adjustments(int);
+    callback hud-zoom-input(int, float);
 
     property <length> toolbar-height: 40px;
     property <length> pane-gap: 6px;
@@ -448,6 +457,14 @@ export component AppWindow inherits Window {
                     root.tab-tooltip-x = cx;
                     root.tab-tooltip-y = ty;
                 }
+                hud-toggle-scale-bar(pane) => { root.hud-toggle-scale-bar(pane); }
+                hud-toggle-dropdown(pane) => { root.hud-toggle-dropdown(pane); }
+                hud-gamma-changed(pane, v) => { root.hud-gamma-changed(pane, v); }
+                hud-brightness-changed(pane, v) => { root.hud-brightness-changed(pane, v); }
+                hud-contrast-changed(pane, v) => { root.hud-contrast-changed(pane, v); }
+                hud-measurement-unit-changed(pane, u) => { root.hud-measurement-unit-changed(pane, u); }
+                hud-reset-adjustments(pane) => { root.hud-reset-adjustments(pane); }
+                hud-zoom-input(pane, v) => { root.hud-zoom-input(pane, v); }
             }
 
             if panes.length == 0: HomeScreen {

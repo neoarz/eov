@@ -37,6 +37,30 @@ fn lanczos_adaptive_weight(zoom: f64) -> f64 {
     }
 }
 
+/// Apply gamma, brightness, and contrast adjustments to an RGBA pixel buffer.
+fn apply_adjustments(buffer: &mut [u8], gamma: f32, brightness: f32, contrast: f32) {
+    // Pre-compute a 256-entry lookup table for the combined transformation.
+    // Pipeline: input → gamma → brightness → contrast → clamp
+    let inv_gamma = if gamma > 0.001 { 1.0 / gamma } else { 1.0 };
+    let mut lut = [0u8; 256];
+    for (i, entry) in lut.iter_mut().enumerate() {
+        let normalized = i as f32 / 255.0;
+        // Apply gamma
+        let g = normalized.powf(inv_gamma);
+        // Apply brightness (additive)
+        let b = g + brightness;
+        // Apply contrast (multiply around midpoint 0.5)
+        let c = (b - 0.5) * contrast + 0.5;
+        *entry = (c * 255.0).clamp(0.0, 255.0) as u8;
+    }
+    // Apply LUT to RGB channels (skip alpha every 4th byte)
+    for chunk in buffer.chunks_exact_mut(4) {
+        chunk[0] = lut[chunk[0] as usize];
+        chunk[1] = lut[chunk[1] as usize];
+        chunk[2] = lut[chunk[2] as usize];
+    }
+}
+
 /// Result of trilinear level calculation
 #[derive(Debug, Clone, Copy)]
 pub struct TrilinearLevels {
@@ -538,6 +562,9 @@ fn render_pane_to_image(
         last_render_level,
         previous_tiles_loaded,
         last_seen_tile_epoch,
+        hud_gamma,
+        hud_brightness,
+        hud_contrast,
     ) = {
         let Some(pane_state) = file.pane_state_mut(pane) else {
             return PaneRenderOutcome::default();
@@ -557,6 +584,9 @@ fn render_pane_to_image(
             pane_state.last_render_level,
             pane_state.tiles_loaded_since_render,
             pane_state.last_seen_tile_epoch,
+            pane_state.hud.gamma,
+            pane_state.hud.brightness,
+            pane_state.hud.contrast,
         )
     };
 
@@ -907,6 +937,14 @@ fn render_pane_to_image(
         // Non-Lanczos modes: Bilinear or explicit Trilinear
         blit_all_tiles(buffer, blitter::blit_tile);
         apply_trilinear_coarse(buffer);
+    }
+
+    // Post-processing: apply gamma, brightness, contrast if they differ from defaults
+    let has_adjustments = (hud_gamma - 1.0).abs() > 0.001
+        || hud_brightness.abs() > 0.001
+        || (hud_contrast - 1.0).abs() > 0.001;
+    if has_adjustments {
+        apply_adjustments(buffer, hud_gamma, hud_brightness, hud_contrast);
     }
 
     PaneRenderOutcome {
