@@ -234,7 +234,7 @@ Current packaging entry points:
 │   └── ui/               # Slint UI components
 ├── common/               # Shared WSI, tile, cache, and viewport code
 │   ├── src/
-│   └── benches/
+│   └── benches/          # Benchmarks for various core functions
 └── fixtures/             # Sample data used for local testing/benchmarks
 ```
 
