@@ -15,13 +15,11 @@ ARCH_LABEL="${ARCH_LABEL:-}"
 APP_BUNDLE_NAME="${APP_BUNDLE_NAME:-$PRODUCT_NAME.app}"
 BUILD_ROOT="${BUILD_ROOT:-$REPO_ROOT/packaging/macos/build}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
-ICON_SOURCE="${ICON_SOURCE:-$REPO_ROOT/images/logo_256.png}"
 ICNS_SOURCE="${ICNS_SOURCE:-$REPO_ROOT/assets/macos/eov.icns}"
 INFO_PLIST_TEMPLATE="${INFO_PLIST_TEMPLATE:-$REPO_ROOT/assets/macos/Info.plist}"
 BUNDLE_ICON_NAME="${BUNDLE_ICON_NAME:-$PRODUCT_NAME.icns}"
 ARCHIVE_BASENAME="${ARCHIVE_BASENAME:-}"
 CREATE_ZIP="${CREATE_ZIP:-1}"
-CREATE_DMG="${CREATE_DMG:-0}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
 STAGING_DIR="$BUILD_ROOT/staging"
@@ -145,15 +143,9 @@ build_binary() {
 }
 
 generate_bundle_icon() {
-    if [[ -f "$ICNS_SOURCE" ]]; then
-        log "Copying macOS bundle icon from $(basename "$ICNS_SOURCE")"
-        cp "$ICNS_SOURCE" "$ICON_OUTPUT_PATH"
-        return 0
-    fi
-
-    require_file "$ICON_SOURCE"
-    log "Generating macOS bundle icon from $(basename "$ICON_SOURCE")"
-    sips -s format icns "$ICON_SOURCE" --out "$ICON_OUTPUT_PATH" >/dev/null
+    require_file "$ICNS_SOURCE"
+    log "Copying macOS bundle icon from $(basename "$ICNS_SOURCE")"
+    cp "$ICNS_SOURCE" "$ICON_OUTPUT_PATH"
 }
 
 render_info_plist() {
@@ -276,22 +268,6 @@ create_zip_archive() {
     shasum -a 256 "$zip_path" > "$checksum_path"
 }
 
-create_dmg_archive() {
-    local dmg_path="$DIST_DIR/${ARCHIVE_BASENAME}.dmg"
-    local checksum_path="${dmg_path}.sha256"
-
-    command -v hdiutil >/dev/null 2>&1 || fail "hdiutil is required to create a DMG"
-
-    log "Creating DMG $(basename "$dmg_path")"
-    hdiutil create \
-        -volname "$PRODUCT_NAME" \
-        -srcfolder "$APP_BUNDLE_PATH" \
-        -ov \
-        -format UDZO \
-        "$dmg_path"
-    shasum -a 256 "$dmg_path" > "$checksum_path"
-}
-
 print_summary() {
     log "Bundle contents:"
     ls -la "$CONTENTS_DIR"
@@ -320,10 +296,6 @@ main() {
 
     if [[ "$CREATE_ZIP" == "1" ]]; then
         create_zip_archive
-    fi
-
-    if [[ "$CREATE_DMG" == "1" ]]; then
-        create_dmg_archive
     fi
 
     print_summary

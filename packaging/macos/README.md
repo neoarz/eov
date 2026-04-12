@@ -2,12 +2,12 @@
 
 This directory contains the source-controlled macOS packaging entry point for `eov`.
 
-The script builds a `.app` bundle, copies the macOS icon asset, bundles non-system dynamic libraries, ad-hoc signs the bundle, and optionally produces release archives.
+The script builds a `.app` bundle, copies the checked-in macOS icon asset, bundles non-system dynamic libraries, ad-hoc signs the bundle, and produces a zipped release artifact.
 
 ## Requirements
 
 - macOS
-- Xcode command line tools (`codesign`, `install_name_tool`, `otool`, `sips`)
+- Xcode command line tools (`codesign`, `install_name_tool`, `otool`)
 - Homebrew `openslide` installed, or `OPENSLIDE_LIB_DIR` set
 - Rust toolchain with Cargo
 
@@ -26,12 +26,6 @@ RUST_TARGET=aarch64-apple-darwin ./packaging/macos/build.sh
 RUST_TARGET=x86_64-apple-darwin ./packaging/macos/build.sh
 ```
 
-Also produce a DMG:
-
-```bash
-CREATE_DMG=1 ./packaging/macos/build.sh
-```
-
 Useful environment overrides:
 
 - `VERSION`
@@ -40,5 +34,4 @@ Useful environment overrides:
 - `ARCHIVE_BASENAME`
 - `DIST_DIR`
 - `ICNS_SOURCE`
-- `ICON_SOURCE`
 - `CODESIGN_IDENTITY`
