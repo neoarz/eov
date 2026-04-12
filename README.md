@@ -54,7 +54,7 @@ Prebuilt binaries are available via brew and direct download (`.dmg` file) (TODO
 ### Windows
 Tagged releases publish a Windows zip to GitHub Releases automatically. Run `eov.exe` within the zip to start the program. Only the portable version is available; no Windows installer is planned.
 
-If you want the `eov` command to be available via PATH (e.g. for command prompt or PowerShell) you can do [adding `C:/path/to/eov` to System Variables](https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574%28v%3Doffice.14%29) (given `C:/path/to/eov/eov.exe` reflects your directory structure).
+If you want the `eov` command to be available via PATH (e.g. for command prompt or PowerShell) you can do this by [adding `C:/path/to/eov` to System Variables](https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574%28v%3Doffice.14%29) (given `C:/path/to/eov/eov.exe` reflects your directory structure).
 
 ## Overview
 
