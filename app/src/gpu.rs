@@ -67,7 +67,7 @@ fn apply_stain_norm(color: vec4<f32>) -> vec4<f32> {
     let rgb = max(color.rgb, vec3<f32>(1.0 / 255.0));
     let od = -log(rgb);
     let od_sum = od.r + od.g + od.b;
-    if od_sum <= 0.15 {
+    if od_sum <= 0.15 || od_sum >= 6.0 {
         return color;
     }
     let c0 = max(dot(adjustments.inv_stain_row0.xyz, od), 0.0);
@@ -196,7 +196,7 @@ fn apply_stain_norm(color: vec4<f32>) -> vec4<f32> {
     let rgb = max(color.rgb, vec3<f32>(1.0 / 255.0));
     let od = -log(rgb);
     let od_sum = od.r + od.g + od.b;
-    if od_sum <= 0.15 {
+    if od_sum <= 0.15 || od_sum >= 6.0 {
         return color;
     }
     let c0 = max(dot(adjustments.inv_stain_row0.xyz, od), 0.0);

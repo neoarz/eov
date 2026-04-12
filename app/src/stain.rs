@@ -33,6 +33,9 @@ const TARGET_MAX_C: [f32; 2] = [1.9705, 1.0308];
 // ─── Numerical constants ─────────────────────────────────────────────────────
 /// Background OD threshold — pixels below this total OD are treated as background.
 const OD_THRESHOLD: f32 = 0.15;
+/// Upper OD threshold — pixels above this total OD are artificial dark fill
+/// (e.g. the (30,30,30) viewport background has OD_sum ≈ 6.42) and not tissue.
+const OD_THRESHOLD_HIGH: f32 = 6.0;
 /// Minimum pixel count required for a valid fit.
 const MIN_TISSUE_PIXELS: usize = 100;
 /// Epsilon to avoid log(0) / division by zero.
@@ -84,12 +87,15 @@ fn od_to_rgb(od: [f32; 3]) -> [u8; 3] {
 }
 
 /// Returns true if a pixel's total OD indicates tissue (non-background).
+/// Filters both near-white (slide background) and near-black (viewport fill).
 #[inline]
 fn is_tissue(od: &[f32; 3]) -> bool {
-    od[0] + od[1] + od[2] > OD_THRESHOLD
+    let sum = od[0] + od[1] + od[2];
+    sum > OD_THRESHOLD && sum < OD_THRESHOLD_HIGH
 }
 
 /// Collect OD pixels from an RGBA buffer, filtering out background.
+#[cfg(test)]
 fn collect_tissue_od(buffer: &[u8]) -> Vec<[f32; 3]> {
     let pixel_count = buffer.len() / 4;
     let mut result = Vec::with_capacity(pixel_count / 2);
@@ -501,15 +507,39 @@ fn compute_norm_params(
     }
 }
 
+/// Sample tissue OD pixels from raw RGBA tile byte slices with subsampling.
+fn sample_tissue_od_from_raw(tile_slices: &[&[u8]], max_samples: usize) -> Vec<[f32; 3]> {
+    let total_pixels: usize = tile_slices.iter().map(|s| s.len() / 4).sum();
+    let sample_step = (total_pixels / max_samples).max(1);
+    let mut result = Vec::with_capacity(max_samples);
+    let mut idx = 0usize;
+    for slice in tile_slices {
+        for chunk in slice.chunks_exact(4) {
+            if idx.is_multiple_of(sample_step) {
+                let od = rgb_to_od(chunk[0], chunk[1], chunk[2]);
+                if is_tissue(&od) {
+                    result.push(od);
+                }
+            }
+            idx += 1;
+        }
+    }
+    result
+}
+
 // ─── Public API: CPU buffer normalization ────────────────────────────────────
 
 /// Apply stain normalization to an RGBA buffer (CPU path).
-pub fn normalize_buffer(buffer: &mut [u8], method: StainNormalization) {
+///
+/// `tile_data` provides raw RGBA byte slices from tiles for stain matrix
+/// estimation. Estimating from raw tiles (rather than the composited buffer)
+/// ensures identical results to the GPU path, which also estimates from tiles.
+pub fn normalize_buffer(buffer: &mut [u8], method: StainNormalization, tile_data: &[&[u8]]) {
     if method == StainNormalization::None {
         return;
     }
 
-    let od_pixels = collect_tissue_od(buffer);
+    let od_pixels = sample_tissue_od_from_raw(tile_data, 10000);
     if od_pixels.len() < MIN_TISSUE_PIXELS {
         return;
     }

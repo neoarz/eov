@@ -975,7 +975,14 @@ fn render_pane_to_image(
     }
 
     // Post-processing: apply stain normalization if enabled
-    crate::stain::normalize_buffer(buffer, hud_stain_normalization);
+    // Collect raw tile data for estimation (avoids contamination from
+    // composited buffer's dark background fill).
+    let tile_slices: Vec<&[u8]> = cached_tiles
+        .iter()
+        .map(|(_, td)| td.data.as_slice())
+        .chain(fallback_blits.iter().map(|(td, ..)| td.data.as_slice()))
+        .collect();
+    crate::stain::normalize_buffer(buffer, hud_stain_normalization, &tile_slices);
 
     // Post-processing: apply gamma, brightness, contrast if they differ from defaults
     let has_adjustments = (hud_gamma - 1.0).abs() > 0.001
