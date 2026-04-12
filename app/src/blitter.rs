@@ -174,6 +174,142 @@ pub fn blit_tile(
     }
 }
 
+/// Lanczos kernel evaluation: sinc(x) * sinc(x/a)
+#[inline(always)]
+fn lanczos_weight(x: f64, a: f64) -> f64 {
+    if x.abs() < 1e-8 {
+        return 1.0;
+    }
+    if x.abs() >= a {
+        return 0.0;
+    }
+    let px = std::f64::consts::PI * x;
+    let pxa = px / a;
+    (px.sin() / px) * (pxa.sin() / pxa)
+}
+
+/// Lanczos-3 tile blitter (a=3, 6x6 kernel)
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+pub fn blit_tile_lanczos3(
+    dest: &mut [u8],
+    dest_width: u32,
+    dest_height: u32,
+    src: &[u8],
+    src_width: u32,
+    src_height: u32,
+    dest_x: i32,
+    dest_y: i32,
+    scaled_width: i32,
+    scaled_height: i32,
+) {
+    if scaled_width <= 0 || scaled_height <= 0 {
+        return;
+    }
+    if dest_x + scaled_width <= 0 || dest_y + scaled_height <= 0 {
+        return;
+    }
+    if dest_x >= dest_width as i32 || dest_y >= dest_height as i32 {
+        return;
+    }
+
+    let start_x = dest_x.max(0) as u32;
+    let start_y = dest_y.max(0) as u32;
+    let end_x = (dest_x + scaled_width).min(dest_width as i32) as u32;
+    let end_y = (dest_y + scaled_height).min(dest_height as i32) as u32;
+    if start_x >= end_x || start_y >= end_y {
+        return;
+    }
+
+    // 1:1 fast path
+    if scaled_width == src_width as i32 && scaled_height == src_height as i32 {
+        let dest_stride = (dest_width * 4) as usize;
+        let src_stride = (src_width * 4) as usize;
+        let copy_width = (end_x - start_x) as usize * 4;
+        let src_x_offset = (start_x as i32 - dest_x) as usize * 4;
+        for y in start_y..end_y {
+            let src_y = (y as i32 - dest_y) as usize;
+            let src_off = src_y * src_stride + src_x_offset;
+            let dest_off = y as usize * dest_stride + start_x as usize * 4;
+            if src_off + copy_width <= src.len() && dest_off + copy_width <= dest.len() {
+                dest[dest_off..dest_off + copy_width]
+                    .copy_from_slice(&src[src_off..src_off + copy_width]);
+            }
+        }
+        return;
+    }
+
+    let scale_x = src_width as f64 / scaled_width.max(1) as f64;
+    let scale_y = src_height as f64 / scaled_height.max(1) as f64;
+    let dest_stride = (dest_width * 4) as usize;
+    let src_stride = (src_width * 4) as usize;
+    let src_w = src_width as i32;
+    let src_h = src_height as i32;
+    let a = 3.0_f64;
+
+    for y in start_y..end_y {
+        let local_y = (y as i32 - dest_y) as f64;
+        let src_yf = local_y * scale_y;
+        let center_y = src_yf.floor() as i32;
+        let frac_y = src_yf - center_y as f64;
+
+        let dest_row = y as usize * dest_stride;
+
+        for x in start_x..end_x {
+            let local_x = (x as i32 - dest_x) as f64;
+            let src_xf = local_x * scale_x;
+            let center_x = src_xf.floor() as i32;
+            let frac_x = src_xf - center_x as f64;
+
+            let mut r = 0.0_f64;
+            let mut g = 0.0_f64;
+            let mut b = 0.0_f64;
+            let mut aa = 0.0_f64;
+            let mut w_sum = 0.0_f64;
+
+            for j in -2..=3_i32 {
+                let sy = (center_y + j).clamp(0, src_h - 1) as usize;
+                let wy = lanczos_weight(j as f64 - frac_y, a);
+                let row = sy * src_stride;
+                for i in -2..=3_i32 {
+                    let sx = (center_x + i).clamp(0, src_w - 1) as usize;
+                    let wx = lanczos_weight(i as f64 - frac_x, a);
+                    let w = wx * wy;
+                    let idx = row + sx * 4;
+                    if idx + 3 < src.len() {
+                        r += src[idx] as f64 * w;
+                        g += src[idx + 1] as f64 * w;
+                        b += src[idx + 2] as f64 * w;
+                        aa += src[idx + 3] as f64 * w;
+                        w_sum += w;
+                    }
+                }
+            }
+
+            let dest_idx = dest_row + x as usize * 4;
+            if dest_idx + 3 < dest.len() && w_sum.abs() > 1e-8 {
+                dest[dest_idx] = (r / w_sum).clamp(0.0, 255.0) as u8;
+                dest[dest_idx + 1] = (g / w_sum).clamp(0.0, 255.0) as u8;
+                dest[dest_idx + 2] = (b / w_sum).clamp(0.0, 255.0) as u8;
+                dest[dest_idx + 3] = (aa / w_sum).clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+}
+
+/// Alpha-blend two RGBA buffers: dest = fine * (1-blend) + coarse * blend
+/// Both buffers must be the same size (width * height * 4 bytes).
+pub fn blend_buffers(dest: &mut [u8], coarse: &[u8], blend: f64) {
+    let b = (blend * 256.0).round() as u32;
+    let inv_b = 256 - b;
+    for (d, c) in dest.chunks_exact_mut(4).zip(coarse.chunks_exact(4)) {
+        d[0] = ((d[0] as u32 * inv_b + c[0] as u32 * b) >> 8) as u8;
+        d[1] = ((d[1] as u32 * inv_b + c[1] as u32 * b) >> 8) as u8;
+        d[2] = ((d[2] as u32 * inv_b + c[2] as u32 * b) >> 8) as u8;
+        d[3] = ((d[3] as u32 * inv_b + c[3] as u32 * b) >> 8) as u8;
+    }
+}
+
 /// Create a SharedPixelBuffer from raw RGBA data
 pub fn create_image_buffer(
     data: &[u8],

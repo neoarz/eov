@@ -20,6 +20,18 @@ pub enum RenderBackend {
     Gpu,
 }
 
+/// Filtering mode for tile rendering
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilteringMode {
+    /// Bilinear interpolation within a single mip level
+    #[default]
+    Bilinear,
+    /// Trilinear: bilinear + mip-level blending
+    Trilinear,
+    /// Lanczos-3 (a=3) resampling kernel
+    Lanczos3,
+}
+
 /// Maximum number of recently opened files to track
 const MAX_RECENT_FILES: usize = 10;
 
@@ -369,6 +381,8 @@ pub struct AppState {
     pub render_backend: RenderBackend,
     /// Whether GPU rendering is available on this system
     pub gpu_backend_available: bool,
+    /// The selected texture filtering mode
+    pub filtering_mode: FilteringMode,
     /// Whether the minimap/zoom controls are shown in viewports
     pub show_minimap: bool,
     /// Whether the metadata HUD is shown in viewports
@@ -405,6 +419,7 @@ impl AppState {
             last_rendered_file_ids: vec![None],
             render_backend: RenderBackend::Cpu,
             gpu_backend_available: false,
+            filtering_mode: FilteringMode::default(),
             show_minimap: true,
             show_metadata: false,
             needs_render: true,
@@ -1122,6 +1137,16 @@ impl AppState {
             }
         }
         self.needs_render = true;
+    }
+
+    pub fn select_filtering_mode(&mut self, mode: FilteringMode) {
+        if self.filtering_mode != mode {
+            self.filtering_mode = mode;
+            for file in &mut self.open_files {
+                file.invalidate_render_state();
+            }
+            self.needs_render = true;
+        }
     }
 
     /// Get a file by ID

@@ -1,4 +1,4 @@
-use crate::state::RenderBackend;
+use crate::state::{FilteringMode, RenderBackend};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -32,9 +32,39 @@ impl From<RenderBackend> for ConfigRenderBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ConfigFilteringMode {
+    Bilinear,
+    Trilinear,
+    #[serde(rename = "lanczos3")]
+    Lanczos3,
+}
+
+impl From<ConfigFilteringMode> for FilteringMode {
+    fn from(value: ConfigFilteringMode) -> Self {
+        match value {
+            ConfigFilteringMode::Bilinear => FilteringMode::Bilinear,
+            ConfigFilteringMode::Trilinear => FilteringMode::Trilinear,
+            ConfigFilteringMode::Lanczos3 => FilteringMode::Lanczos3,
+        }
+    }
+}
+
+impl From<FilteringMode> for ConfigFilteringMode {
+    fn from(value: FilteringMode) -> Self {
+        match value {
+            FilteringMode::Bilinear => ConfigFilteringMode::Bilinear,
+            FilteringMode::Trilinear => ConfigFilteringMode::Trilinear,
+            FilteringMode::Lanczos3 => ConfigFilteringMode::Lanczos3,
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct AppConfig {
     render_backend: Option<ConfigRenderBackend>,
+    filtering_mode: Option<ConfigFilteringMode>,
 }
 
 pub fn set_config_path_override(path: PathBuf) -> Result<()> {
@@ -81,16 +111,49 @@ pub fn load_render_backend() -> Result<Option<RenderBackend>> {
     Ok(config.render_backend.map(RenderBackend::from))
 }
 
+pub fn load_filtering_mode() -> Result<Option<FilteringMode>> {
+    let path = resolve_config_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read config file at {}", path.display()))?;
+    let config: AppConfig = toml::from_str(&contents)
+        .with_context(|| format!("failed to parse config file at {}", path.display()))?;
+    Ok(config.filtering_mode.map(FilteringMode::from))
+}
+
 pub fn save_render_backend(backend: RenderBackend) -> Result<()> {
+    save_config_field(|config| {
+        config.render_backend = Some(ConfigRenderBackend::from(backend));
+    })
+}
+
+pub fn save_filtering_mode(mode: FilteringMode) -> Result<()> {
+    save_config_field(|config| {
+        config.filtering_mode = Some(ConfigFilteringMode::from(mode));
+    })
+}
+
+fn save_config_field(update: impl FnOnce(&mut AppConfig)) -> Result<()> {
     let path = resolve_config_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create config directory {}", parent.display()))?;
     }
 
-    let config = AppConfig {
-        render_backend: Some(ConfigRenderBackend::from(backend)),
+    let mut config = if path.exists() {
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read config file at {}", path.display()))?;
+        toml::from_str(&contents)
+            .with_context(|| format!("failed to parse config file at {}", path.display()))?
+    } else {
+        AppConfig::default()
     };
+
+    update(&mut config);
+
     let contents =
         toml::to_string_pretty(&config).context("failed to serialize EOV configuration")?;
     fs::write(&path, contents)

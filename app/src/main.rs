@@ -694,6 +694,7 @@ fn main() -> Result<()> {
     info!("Starting EOV WSI Viewer");
 
     let persisted_backend = config::load_render_backend()?;
+    let persisted_filtering = config::load_filtering_mode()?;
     let initial_backend = launch_options
         .render_backend_override
         .or(persisted_backend)
@@ -756,7 +757,11 @@ fn main() -> Result<()> {
         let mut state = state.write();
         state.gpu_backend_available = gpu_backend_available;
         state.select_render_backend(initial_backend);
+        if let Some(filtering) = persisted_filtering {
+            state.select_filtering_mode(filtering);
+        }
         update_render_backend(&ui, &state);
+        update_filtering_mode(&ui, &state);
         if initial_backend == RenderBackend::Gpu && state.render_backend != RenderBackend::Gpu {
             ui.set_status_text(SharedString::from(
                 "GPU renderer unavailable; using CPU renderer",
@@ -903,6 +908,10 @@ fn build_recent_menu_items(state: &AppState) -> Vec<ContextMenuItem> {
 
 fn update_render_backend(ui: &AppWindow, state: &AppState) {
     ui_update::update_render_backend(ui, state)
+}
+
+fn update_filtering_mode(ui: &AppWindow, state: &AppState) {
+    ui_update::update_filtering_mode(ui, state)
 }
 
 // ============ Tool handling functions ============

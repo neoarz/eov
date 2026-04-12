@@ -3,6 +3,7 @@
 import { Theme } from "theme.slint";
 import {
     ContextMenuItem,
+    FilteringMode,
     MeasurementLine,
     MetadataItem,
     MinimapRect,
@@ -79,6 +80,8 @@ export component AppWindow inherits Window {
     in-out property <[ContextMenuItem]> context-menu-items: [];
     in-out property <int> context-menu-tab-id: -1;
 
+    in-out property <bool> filter-popup-visible: false;
+
     in-out property <ToolType> current-tool: ToolType.navigate;
     in-out property <ROIRect> primary-roi-rect: { x: 0, y: 0, width: 0, height: 0, visible: false };
     in-out property <ROIRect> secondary-roi-rect: { x: 0, y: 0, width: 0, height: 0, visible: false };
@@ -91,6 +94,7 @@ export component AppWindow inherits Window {
     in-out property <float> fps: 0;
     in-out property <RenderMode> render-mode: RenderMode.cpu;
     in-out property <bool> gpu-rendering-available: false;
+    in-out property <FilteringMode> filtering-mode: FilteringMode.bilinear;
     in-out property <bool> show-minimap: true;
     in-out property <bool> show-metadata: false;
 
@@ -127,6 +131,7 @@ export component AppWindow inherits Window {
     callback viewport-tool-mouse-up(float, float);
     callback cancel-tool();
     callback render-backend-selected(RenderMode);
+    callback filtering-mode-selected(FilteringMode);
     callback move-tab-to-pane(int, int, int);
     callback split-tab-by-drop(int, int);
     callback reorder-tab(int, int, int);
@@ -210,6 +215,8 @@ export component AppWindow inherits Window {
             current-tool: root.current-tool;
             render-mode: root.render-mode;
             gpu-rendering-available: root.gpu-rendering-available;
+            filtering-mode: root.filtering-mode;
+            filter-popup-visible <=> root.filter-popup-visible;
             show-minimap: root.show-minimap;
             show-metadata: root.show-metadata;
             use-native-window-controls: root.use-native-window-controls;
@@ -222,6 +229,7 @@ export component AppWindow inherits Window {
             toggle-metadata-requested => { root.toggle-metadata-requested(); }
             tool-selected(tool) => { root.tool-selected(tool); }
             render-backend-selected(mode) => { root.render-backend-selected(mode); }
+            filtering-mode-selected(mode) => { root.filtering-mode-selected(mode); }
             window-minimize => { root.window-minimize(); }
             window-maximize => { root.window-maximize(); }
             window-close => { root.window-close(); }
@@ -428,6 +436,106 @@ export component AppWindow inherits Window {
                 }
             } else {
                 root.context-menu-command(id);
+            }
+        }
+    }
+
+    // Dismiss overlay for filtering popup
+    if root.filter-popup-visible: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: transparent;
+
+        TouchArea {
+            clicked => {
+                root.filter-popup-visible = false;
+            }
+        }
+    }
+
+    // Floating filtering dropdown (rendered above all content)
+    if root.filter-popup-visible: Rectangle {
+        x: toolbar.filter-combo-abs-x;
+        y: toolbar.filter-combo-abs-y;
+        width: toolbar.filter-combo-width;
+        height: 3 * 26px + 4px;
+        background: Theme.context-menu-bg;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        VerticalLayout {
+            padding: 2px;
+
+            Rectangle {
+                height: 26px;
+                background: bilinear-touch.has-hover ? Theme.context-menu-hover : transparent;
+                border-radius: 2px;
+
+                bilinear-touch := TouchArea {
+                    clicked => {
+                        root.filter-popup-visible = false;
+                        root.filtering-mode-selected(FilteringMode.bilinear);
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    Text {
+                        text: root.filtering-mode == FilteringMode.bilinear ? "✓ Bilinear" : "   Bilinear";
+                        color: Theme.text-primary;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 26px;
+                background: trilinear-touch.has-hover ? Theme.context-menu-hover : transparent;
+                border-radius: 2px;
+
+                trilinear-touch := TouchArea {
+                    clicked => {
+                        root.filter-popup-visible = false;
+                        root.filtering-mode-selected(FilteringMode.trilinear);
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    Text {
+                        text: root.filtering-mode == FilteringMode.trilinear ? "✓ Trilinear" : "   Trilinear";
+                        color: Theme.text-primary;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 26px;
+                background: lanczos3-touch.has-hover ? Theme.context-menu-hover : transparent;
+                border-radius: 2px;
+
+                lanczos3-touch := TouchArea {
+                    clicked => {
+                        root.filter-popup-visible = false;
+                        root.filtering-mode-selected(FilteringMode.lanczos3);
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    Text {
+                        text: root.filtering-mode == FilteringMode.lanczos3 ? "✓ Lanczos-3" : "   Lanczos-3";
+                        color: Theme.text-primary;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
             }
         }
     }

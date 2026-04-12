@@ -1,4 +1,5 @@
 use crate::AppWindow;
+use crate::state::FilteringMode;
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use common::{TileCoord, TileData};
@@ -82,6 +83,93 @@ fn fs_mipgen(input: MipgenVertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Lanczos-3 fragment shader: samples a 6x6 kernel from the fine texture
+const LANCZOS_SHADER_SOURCE: &str = r#"
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+    @location(1) fine_uv: vec2<f32>,
+    @location(2) coarse_uv: vec2<f32>,
+    @location(3) mip_blend: f32,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) fine_uv: vec2<f32>,
+    @location(1) coarse_uv: vec2<f32>,
+    @location(2) mip_blend: f32,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = vec4<f32>(input.position, 0.0, 1.0);
+    output.fine_uv = input.fine_uv;
+    output.coarse_uv = input.coarse_uv;
+    output.mip_blend = input.mip_blend;
+    return output;
+}
+
+@group(0) @binding(0)
+var fine_texture: texture_2d<f32>;
+
+@group(0) @binding(1)
+var coarse_texture: texture_2d<f32>;
+
+@group(0) @binding(2)
+var tile_sampler: sampler;
+
+const PI: f32 = 3.14159265358979323846;
+const LANCZOS_A: f32 = 3.0;
+
+fn sinc(x: f32) -> f32 {
+    if abs(x) < 1e-6 {
+        return 1.0;
+    }
+    let px = PI * x;
+    return sin(px) / px;
+}
+
+fn lanczos_weight(x: f32) -> f32 {
+    if abs(x) >= LANCZOS_A {
+        return 0.0;
+    }
+    return sinc(x) * sinc(x / LANCZOS_A);
+}
+
+@fragment
+fn fs_lanczos(input: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_size = vec2<f32>(textureDimensions(fine_texture, 0));
+    let uv_pixel = input.fine_uv * tex_size - 0.5;
+    let center = floor(uv_pixel);
+    let fract_part = uv_pixel - center;
+
+    var color = vec4<f32>(0.0);
+    var weight_sum: f32 = 0.0;
+
+    for (var j: i32 = -2; j <= 3; j++) {
+        for (var i: i32 = -2; i <= 3; i++) {
+            let offset = vec2<f32>(f32(i), f32(j));
+            let sample_pos = center + offset;
+            let sample_uv = (sample_pos + 0.5) / tex_size;
+
+            let wx = lanczos_weight(f32(i) - fract_part.x);
+            let wy = lanczos_weight(f32(j) - fract_part.y);
+            let w = wx * wy;
+
+            let sample = textureSampleLevel(fine_texture, tile_sampler, sample_uv, 0.0);
+            color += sample * w;
+            weight_sum += w;
+        }
+    }
+
+    if weight_sum > 0.0 {
+        color = color / weight_sum;
+    }
+
+    return clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+"#;
+
 #[derive(Clone)]
 pub struct TileDraw {
     pub tile: Arc<TileData>,
@@ -93,6 +181,7 @@ pub struct TileDraw {
     pub coarse_uv_min: [f32; 2],
     pub coarse_uv_max: [f32; 2],
     pub mip_blend: f32,
+    pub filtering_mode: FilteringMode,
 }
 
 #[derive(Clone, Copy)]
@@ -136,8 +225,10 @@ struct GpuRuntime {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    lanczos_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    bilinear_sampler: wgpu::Sampler,
     mipgen_pipeline: wgpu::RenderPipeline,
     mipgen_bind_group_layout: wgpu::BindGroupLayout,
     mipgen_sampler: wgpu::Sampler,
@@ -274,6 +365,19 @@ impl GpuRenderer {
             ..Default::default()
         });
 
+        // Bilinear-only sampler (no mipmap blending)
+        let bilinear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("viewport-tile-bilinear-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            anisotropy_clamp: 1,
+            ..Default::default()
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("viewport-tile-pipeline-layout"),
             bind_group_layouts: &[&bind_group_layout],
@@ -315,6 +419,42 @@ impl GpuRenderer {
             size: std::mem::size_of::<Vertex>() as u64 * 6,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });
+
+        // Lanczos pipeline: same bind group layout, different fragment shader
+        let lanczos_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("lanczos-shader"),
+            source: wgpu::ShaderSource::Wgsl(LANCZOS_SHADER_SOURCE.into()),
+        });
+
+        let lanczos_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewport-lanczos-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &lanczos_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32],
+                }],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &lanczos_shader,
+                entry_point: Some("fs_lanczos"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
         });
 
         let mipgen_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -389,8 +529,10 @@ impl GpuRenderer {
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
+            lanczos_pipeline,
             bind_group_layout,
             sampler,
+            bilinear_sampler,
             mipgen_pipeline,
             mipgen_bind_group_layout,
             mipgen_sampler,
@@ -567,6 +709,18 @@ impl GpuRenderer {
         }
 
         // Phase 3: Main render pass (executes after mipmap generation on GPU)
+        // Determine filtering mode from the first draw (all draws share the same mode)
+        let filtering_mode = frame
+            .draws
+            .first()
+            .map(|d| d.filtering_mode)
+            .unwrap_or(FilteringMode::Bilinear);
+        let use_lanczos = matches!(filtering_mode, FilteringMode::Lanczos3);
+        let active_sampler = if filtering_mode == FilteringMode::Bilinear {
+            &runtime.bilinear_sampler
+        } else {
+            &runtime.sampler
+        };
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("viewport-tile-pass"),
@@ -590,7 +744,11 @@ impl GpuRenderer {
                 multiview_mask: None,
             });
 
-            render_pass.set_pipeline(&runtime.pipeline);
+            if use_lanczos {
+                render_pass.set_pipeline(&runtime.lanczos_pipeline);
+            } else {
+                render_pass.set_pipeline(&runtime.pipeline);
+            }
             render_pass.set_vertex_buffer(0, runtime.vertex_buffer.slice(..));
 
             for (index, draw) in frame.draws.iter().enumerate() {
@@ -622,7 +780,7 @@ impl GpuRenderer {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 2,
-                                resource: wgpu::BindingResource::Sampler(&runtime.sampler),
+                                resource: wgpu::BindingResource::Sampler(active_sampler),
                             },
                         ],
                     });

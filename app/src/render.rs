@@ -6,7 +6,7 @@
 use crate::AppWindow;
 use crate::blitter;
 use crate::gpu::{SurfaceSlot, TileDraw};
-use crate::state::{AppState, OpenFile, PaneId, RenderBackend, TileRequestSignature};
+use crate::state::{AppState, FilteringMode, OpenFile, PaneId, RenderBackend, TileRequestSignature};
 use crate::tile_loader::calculate_wanted_tiles;
 use crate::tools;
 use common::{TileCache, TileCoord, TileManager, Viewport, WsiFile};
@@ -15,44 +15,6 @@ use slint::{ComponentHandle, Image};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::debug;
-
-/// Texture filtering mode for rendering
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FilterMode {
-    /// Nearest-neighbor sampling (fastest, pixelated)
-    #[default]
-    Nearest,
-    /// Bilinear filtering within a single mip level (smooth but may show level transitions)
-    Bilinear,
-    /// Trilinear filtering: bilinear sampling with mip-level blending (smoothest transitions)
-    Trilinear,
-}
-
-/// Render quality settings
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
-pub struct RenderQuality {
-    /// Texture filtering mode
-    pub filter_mode: FilterMode,
-    /// Anti-aliasing for text overlay
-    pub antialias: bool,
-    /// Show tile boundaries for debugging
-    pub show_tile_boundaries: bool,
-    /// Show debug info overlay
-    pub show_debug_info: bool,
-}
-
-impl Default for RenderQuality {
-    fn default() -> Self {
-        Self {
-            filter_mode: FilterMode::Trilinear, // Use trilinear for best quality
-            antialias: true,
-            show_tile_boundaries: false,
-            show_debug_info: false,
-        }
-    }
-}
 
 /// Result of trilinear level calculation
 #[derive(Debug, Clone, Copy)]
@@ -343,6 +305,7 @@ pub(crate) fn update_and_render(
 ) -> bool {
     let mut state = state.write();
     let render_backend = state.render_backend;
+    let filtering_mode = state.filtering_mode;
     let pane_count = state.panes.len();
     let active_file_ids: Vec<Option<i32>> = state
         .panes
@@ -494,6 +457,7 @@ pub(crate) fn update_and_render(
             content_height,
             force_render,
             render_backend,
+            filtering_mode,
         );
 
         if pane.0 == 1 {
@@ -539,6 +503,7 @@ fn render_pane_to_image(
     target_height: f64,
     force_render: bool,
     render_backend: RenderBackend,
+    filtering_mode: FilteringMode,
 ) -> PaneRenderOutcome {
     let (
         animating,
@@ -609,8 +574,10 @@ fn render_pane_to_image(
         .collect();
     let cached_count = cached_tiles.len() as u32;
 
+    // Only fetch coarse tiles for trilinear blending
+    let use_trilinear_blend = filtering_mode == FilteringMode::Trilinear;
     let cached_coarse_tiles: Vec<_> =
-        if trilinear.level_fine != trilinear.level_coarse && trilinear.blend > 0.01 {
+        if use_trilinear_blend && trilinear.level_fine != trilinear.level_coarse && trilinear.blend > 0.01 {
             file.tile_manager
                 .visible_tiles_with_margin(
                     trilinear.level_coarse,
@@ -694,7 +661,17 @@ fn render_pane_to_image(
     }
 
     if render_backend == RenderBackend::Gpu {
-        let draws = collect_tile_draws(file, tile_cache, vp, trilinear);
+        // For bilinear/lanczos on GPU, suppress trilinear mip blending
+        let gpu_trilinear = if use_trilinear_blend {
+            trilinear
+        } else {
+            TrilinearLevels {
+                level_fine: trilinear.level_fine,
+                level_coarse: trilinear.level_fine,
+                blend: 0.0,
+            }
+        };
+        let draws = collect_tile_draws(file, tile_cache, vp, gpu_trilinear, filtering_mode);
         let slot = match pane {
             PaneId::PRIMARY => SurfaceSlot::PRIMARY,
             PaneId::SECONDARY => SurfaceSlot::SECONDARY,
@@ -791,8 +768,15 @@ fn render_pane_to_image(
     let buffer = pixel_buffer.make_mut_bytes();
     blitter::fast_fill_rgba(buffer, 30, 30, 30, 255);
 
+    // Choose the blit function based on the selected filtering mode
+    let blit_fn: fn(&mut [u8], u32, u32, &[u8], u32, u32, i32, i32, i32, i32) =
+        match filtering_mode {
+            FilteringMode::Lanczos3 => blitter::blit_tile_lanczos3,
+            _ => blitter::blit_tile, // Bilinear & Trilinear use the same per-tile blit
+        };
+
     for (fallback_tile, screen_x, screen_y, screen_w, screen_h) in fallback_blits {
-        blitter::blit_tile(
+        blit_fn(
             buffer,
             render_width,
             render_height,
@@ -818,7 +802,7 @@ fn render_pane_to_image(
         let screen_w = screen_x_end - screen_x;
         let screen_h = screen_y_end - screen_y;
 
-        blitter::blit_tile(
+        blit_fn(
             buffer,
             render_width,
             render_height,
@@ -830,6 +814,41 @@ fn render_pane_to_image(
             screen_w,
             screen_h,
         );
+    }
+
+    // CPU trilinear: blend with coarse level if applicable
+    if use_trilinear_blend && trilinear.blend > 0.01 && !cached_coarse_tiles.is_empty() {
+        let coarse_level_info = file.wsi.level(trilinear.level_coarse);
+        if let Some(coarse_info) = coarse_level_info {
+            let mut coarse_buffer = vec![0u8; (render_width * render_height * 4) as usize];
+            blitter::fast_fill_rgba(&mut coarse_buffer, 30, 30, 30, 255);
+            for (coord, tile_data) in cached_coarse_tiles.iter() {
+                let image_x = coord.x as f64 * coord.tile_size as f64 * coarse_info.downsample;
+                let image_y = coord.y as f64 * coord.tile_size as f64 * coarse_info.downsample;
+                let image_x_end = image_x + tile_data.width as f64 * coarse_info.downsample;
+                let image_y_end = image_y + tile_data.height as f64 * coarse_info.downsample;
+                let screen_x = ((image_x - bounds.left) * vp.zoom).round() as i32;
+                let screen_y = ((image_y - bounds.top) * vp.zoom).round() as i32;
+                let screen_x_end = ((image_x_end - bounds.left) * vp.zoom).round() as i32;
+                let screen_y_end = ((image_y_end - bounds.top) * vp.zoom).round() as i32;
+                let screen_w = screen_x_end - screen_x;
+                let screen_h = screen_y_end - screen_y;
+
+                blit_fn(
+                    &mut coarse_buffer,
+                    render_width,
+                    render_height,
+                    &tile_data.data,
+                    tile_data.width,
+                    tile_data.height,
+                    screen_x,
+                    screen_y,
+                    screen_w,
+                    screen_h,
+                );
+            }
+            blitter::blend_buffers(buffer, &coarse_buffer, trilinear.blend);
+        }
     }
 
     PaneRenderOutcome {
@@ -844,6 +863,7 @@ fn collect_tile_draws(
     tile_cache: &Arc<TileCache>,
     vp: &Viewport,
     trilinear: TrilinearLevels,
+    filtering_mode: FilteringMode,
 ) -> Vec<TileDraw> {
     let mut draws = Vec::new();
     let bounds = vp.bounds();
@@ -878,6 +898,7 @@ fn collect_tile_draws(
                 *coord,
                 tile_data,
                 None,
+                filtering_mode,
             ) {
                 draws.push(draw);
             }
@@ -917,6 +938,7 @@ fn collect_tile_draws(
             *coord,
             tile_data,
             coarse_blend,
+            filtering_mode,
         ) {
             draws.push(draw);
         }
@@ -1015,6 +1037,7 @@ fn tile_draw_from_tile(
     coord: common::TileCoord,
     tile_data: Arc<common::TileData>,
     coarse_blend: Option<CoarseBlendData>,
+    filtering_mode: FilteringMode,
 ) -> Option<TileDraw> {
     let image_x = coord.x as f64 * coord.tile_size as f64 * downsample;
     let image_y = coord.y as f64 * coord.tile_size as f64 * downsample;
@@ -1048,5 +1071,6 @@ fn tile_draw_from_tile(
         coarse_uv_min,
         coarse_uv_max,
         mip_blend,
+        filtering_mode,
     })
 }

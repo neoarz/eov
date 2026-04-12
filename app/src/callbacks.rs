@@ -1,10 +1,12 @@
 use crate::config;
-use crate::state::{self, AppState, PaneId, RenderBackend};
+use crate::state::{self, AppState, FilteringMode, PaneId, RenderBackend};
 use crate::{
-    AppWindow, RenderMode, ToolType, build_recent_menu_items, copy_text_to_clipboard,
+    AppWindow, FilteringMode as SlintFilteringMode, RenderMode, ToolType,
+    build_recent_menu_items, copy_text_to_clipboard,
     handle_tool_mouse_down, handle_tool_mouse_move, handle_tool_mouse_up, insert_pane_ui_state,
     open_file, pane_from_index, refresh_tab_ui, request_render_loop, slider_value_to_zoom,
-    update_render_backend, update_tabs, update_tool_overlays, update_tool_state,
+    update_filtering_mode, update_render_backend, update_tabs, update_tool_overlays,
+    update_tool_state,
 };
 use common::TileCache;
 use common::viewport::ZOOM_FACTOR;
@@ -247,6 +249,29 @@ fn toggle_metadata_visibility(ui: &AppWindow, state: &Arc<RwLock<AppState>>) {
         state.show_metadata
     };
     ui.set_show_metadata(show_metadata);
+}
+
+fn apply_filtering_mode(
+    state: &Arc<RwLock<AppState>>,
+    tile_cache: &Arc<TileCache>,
+    render_timer: &Rc<Timer>,
+    ui_weak: &slint::Weak<AppWindow>,
+    mode: FilteringMode,
+) {
+    {
+        let mut state = state.write();
+        state.select_filtering_mode(mode);
+        if let Err(err) = config::save_filtering_mode(state.filtering_mode) {
+            warn!("Failed to save filtering mode config: {}", err);
+        }
+    }
+    if let Some(ui) = ui_weak.upgrade() {
+        let state = state.read();
+        update_filtering_mode(&ui, &state);
+    }
+    if let Some(ui) = ui_weak.upgrade() {
+        request_render_loop(render_timer, &ui.as_weak(), state, tile_cache);
+    }
 }
 
 pub fn setup_callbacks(
@@ -499,6 +524,64 @@ pub fn setup_callbacks(
             }
             if let Some(ui) = ui_weak.upgrade() {
                 request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    // Filtering mode selection with Lanczos confirmation dialog
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_filtering_mode_selected(move |slint_mode| {
+            let mode = match slint_mode {
+                SlintFilteringMode::Bilinear => FilteringMode::Bilinear,
+                SlintFilteringMode::Trilinear => FilteringMode::Trilinear,
+                SlintFilteringMode::Lanczos3 => FilteringMode::Lanczos3,
+            };
+
+            let current_mode = state_handle.read().filtering_mode;
+            let is_lanczos = matches!(mode, FilteringMode::Lanczos3);
+            let was_lanczos = matches!(current_mode, FilteringMode::Lanczos3);
+
+            // If switching into a Lanczos mode, show confirmation dialog
+            if is_lanczos && !was_lanczos {
+                let state_handle = Arc::clone(&state_handle);
+                let tile_cache = Arc::clone(&tile_cache);
+                let render_timer = Rc::clone(&render_timer);
+                let ui_weak = ui_weak.clone();
+
+                let confirmed = rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Warning)
+                    .set_title("Lanczos Filtering")
+                    .set_description(
+                        "Lanczos filtering is computationally expensive and may \
+                         significantly degrade rendering performance.\n\n\
+                         Are you sure you want to enable it?"
+                    )
+                    .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                        "Confirm".to_string(),
+                        "Cancel".to_string(),
+                    ))
+                    .show();
+
+                if confirmed == rfd::MessageDialogResult::Custom("Confirm".to_string()) {
+                    apply_filtering_mode(
+                        &state_handle, &tile_cache, &render_timer, &ui_weak, mode,
+                    );
+                } else {
+                    // Revert combobox to current mode
+                    if let Some(ui) = ui_weak.upgrade() {
+                        let state = state_handle.read();
+                        update_filtering_mode(&ui, &state);
+                    }
+                }
+            } else {
+                apply_filtering_mode(
+                    &state_handle, &tile_cache, &render_timer, &ui_weak, mode,
+                );
             }
         });
     }

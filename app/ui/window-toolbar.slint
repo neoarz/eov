@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { RenderMode, ToolType } from "types.slint";
+import { FilteringMode, RenderMode, ToolType } from "types.slint";
 import { IconButton, MeasureToolButton, MetadataToolButton, MinimapToolButton, OpenFileToolButton, RoiToolButton, ToolButton, ZoomInToolButton } from "tab-controls.slint";
 
 export component WindowToolbar inherits Rectangle {
@@ -9,6 +9,11 @@ export component WindowToolbar inherits Rectangle {
     in property <bool> show-minimap: true;
     in property <bool> show-metadata: false;
     in property <bool> use-native-window-controls: false;
+    in property <FilteringMode> filtering-mode: FilteringMode.bilinear;
+    in property <int> filtering-mode-index: filtering-mode == FilteringMode.bilinear ? 0
+        : filtering-mode == FilteringMode.trilinear ? 1
+        : 2;
+    in-out property <bool> filter-popup-visible: false;
 
     callback open-file-requested();
     callback open-recent-menu-requested(length, length);
@@ -19,11 +24,15 @@ export component WindowToolbar inherits Rectangle {
     callback toggle-metadata-requested();
     callback tool-selected(ToolType);
     callback render-backend-selected(RenderMode);
+    callback filtering-mode-selected(FilteringMode);
     callback window-minimize();
     callback window-maximize();
     callback window-close();
 
     out property <float> action-cluster-width: (action-cluster.x + action-cluster.width) / 1px;
+    out property <length> filter-combo-abs-x: filter-combo-area.absolute-position.x;
+    out property <length> filter-combo-abs-y: filter-combo-area.absolute-position.y + filter-combo-area.height + 2px;
+    out property <length> filter-combo-width: filter-combo-area.width;
     out property <bool> hovered-tooltip-visible: hovered-tooltip-text != "";
     out property <string> hovered-tooltip-text:
         open-button.hovered ? open-button.tooltip-text
@@ -183,6 +192,70 @@ export component WindowToolbar inherits Rectangle {
                 tooltip-text: "Toggle metadata HUD";
                 is-active: root.show-metadata;
                 clicked => { root.toggle-metadata-requested(); }
+            }
+
+            Rectangle {
+                width: 1px;
+                height: 24px;
+                background: Theme.border;
+            }
+
+            Rectangle {
+                height: 28px;
+                width: filter-label.preferred-width + 6px + filter-combo-area.width + 4px;
+                border-radius: 3px;
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    padding-left: 3px;
+                    padding-right: 3px;
+
+                    filter-label := Text {
+                        text: "Filtering";
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+
+                    filter-combo-area := Rectangle {
+                        width: 90px;
+                        height: 22px;
+                        border-radius: 3px;
+                        background: filter-combo-touch.has-hover ? Theme.surface-hover : Theme.surface;
+                        border-width: 1px;
+                        border-color: root.filter-popup-visible ? Theme.accent : Theme.border;
+
+                        filter-combo-touch := TouchArea {
+                            clicked => {
+                                root.filter-popup-visible = !root.filter-popup-visible;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 4px;
+
+                            Text {
+                                text: root.filtering-mode == FilteringMode.bilinear ? "Bilinear"
+                                    : root.filtering-mode == FilteringMode.trilinear ? "Trilinear"
+                                    : "Lanczos-3";
+                                color: Theme.text-primary;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: "▾";
+                                color: Theme.text-secondary;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
             }
         }
 

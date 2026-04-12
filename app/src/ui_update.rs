@@ -3,11 +3,12 @@
 //! This module contains functions for updating UI elements like tabs,
 //! recent files, and render backend settings.
 
-use crate::state::{AppState, PaneId, RenderBackend};
+use crate::state::{AppState, FilteringMode, PaneId, RenderBackend};
 use crate::tools::{pane_overlay_data, pane_viewport_state};
 use crate::{
-    ContextMenuItem, MetadataItem, MinimapRect, PaneRenderCacheEntry, PaneUiModels, PaneViewData,
-    RecentFileData, RenderMode, TabData, ViewportInfo,
+    ContextMenuItem, FilteringMode as SlintFilteringMode, MetadataItem, MinimapRect,
+    PaneRenderCacheEntry, PaneUiModels, PaneViewData, RecentFileData, RenderMode, TabData,
+    ViewportInfo,
 };
 use common::viewport::{MAX_ZOOM, MIN_ZOOM};
 use slint::{Image, Model, SharedString, VecModel};
@@ -402,4 +403,18 @@ pub fn build_recent_menu_items(state: &AppState) -> Vec<ContextMenuItem> {
 pub fn update_render_backend(ui: &crate::AppWindow, state: &AppState) {
     ui.set_render_mode(ui_render_mode(state.render_backend));
     ui.set_gpu_rendering_available(state.gpu_backend_available);
+}
+
+/// Convert FilteringMode to Slint FilteringMode
+pub fn ui_filtering_mode(mode: FilteringMode) -> SlintFilteringMode {
+    match mode {
+        FilteringMode::Bilinear => SlintFilteringMode::Bilinear,
+        FilteringMode::Trilinear => SlintFilteringMode::Trilinear,
+        FilteringMode::Lanczos3 => SlintFilteringMode::Lanczos3,
+    }
+}
+
+/// Update the filtering mode UI state
+pub fn update_filtering_mode(ui: &crate::AppWindow, state: &AppState) {
+    ui.set_filtering_mode(ui_filtering_mode(state.filtering_mode));
 }
