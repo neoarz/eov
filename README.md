@@ -159,7 +159,8 @@ eov slide.svs
 eov slide1.svs slide2.svs slide3.svs
 eov --debug --backend gpu slide.svs
 eov --cache-size 512 --max-tiles 4096 slide.svs
-eov --gpu slide.svs
+eov --cpu slide.svs
+eov --gpu --filtering-mode lanczos slide.svs
 eov --log-level debug probe fixtures/C3L-00088-22.svs
 eov --config /tmp/config.toml config-path
 eov recent list
