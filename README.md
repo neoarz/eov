@@ -10,7 +10,7 @@
     <img src="images/eov.webp" width="256">
 </p>
 <p align="center">
-    <a href="https://cyto.sh">Website</a>
+    <a href="https://eov.sh">Website</a>
 </p>
 
 
