@@ -66,9 +66,7 @@ export component AppWindow inherits Window {
     in-out property <int> os-file-hover-side: -1;
     out property <float> content-area-width: content-area.width / 1px;
     out property <float> content-area-height: content-area.height / 1px;
-    out property <float> viewport-width: split-enabled
-        ? (content-area.width * split-position - 3px) / 1px
-        : content-area.width / 1px;
+    out property <float> viewport-width: split-enabled ? (content-area.width * split-position - 3px) / 1px : content-area.width / 1px;
     out property <float> viewport-height: (content-area.height - 35px) / 1px;
     out property <float> secondary-viewport-width: (content-area.width * (1 - split-position) - 3px) / 1px;
     out property <float> secondary-viewport-height: (content-area.height - 35px) / 1px;
@@ -167,7 +165,6 @@ export component AppWindow inherits Window {
             self.split-drop-side = -1;
             return;
         }
-
         let raw-pane = Math.floor(abs-x / self.pane-stride);
         self.drop-target-pane = Math.max(0, Math.min(self.panes.length - 1, raw-pane));
         self.split-drop-side = -1;
@@ -190,7 +187,6 @@ export component AppWindow inherits Window {
             self.os-file-hover-side = -1;
             return;
         }
-
         let raw-pane = Math.floor(abs-x * 1px / self.pane-stride);
         self.os-file-hover-pane = Math.max(0, Math.min(self.panes.length - 1, raw-pane));
         self.os-file-hover-side = -1;
@@ -226,19 +222,45 @@ export component AppWindow inherits Window {
             show-minimap: root.show-minimap;
             show-metadata: root.show-metadata;
             use-native-window-controls: root.use-native-window-controls;
-            open-file-requested => { root.open-file-requested(); }
-            open-recent-menu-requested(x, y) => { root.open-recent-menu-requested(x, y); }
-            frame-requested => { root.frame-requested(); }
-            zoom-in-requested => { root.zoom-in-requested(); }
-            zoom-out-requested => { root.zoom-out-requested(); }
-            toggle-minimap-requested => { root.toggle-minimap-requested(); }
-            toggle-metadata-requested => { root.toggle-metadata-requested(); }
-            tool-selected(tool) => { root.tool-selected(tool); }
-            render-backend-selected(mode) => { root.render-backend-selected(mode); }
-            filtering-mode-selected(mode) => { root.filtering-mode-selected(mode); }
-            window-minimize => { root.window-minimize(); }
-            window-maximize => { root.window-maximize(); }
-            window-close => { root.window-close(); }
+            open-file-requested => {
+                root.open-file-requested();
+            }
+            open-recent-menu-requested(x, y) => {
+                root.open-recent-menu-requested(x, y);
+            }
+            frame-requested => {
+                root.frame-requested();
+            }
+            zoom-in-requested => {
+                root.zoom-in-requested();
+            }
+            zoom-out-requested => {
+                root.zoom-out-requested();
+            }
+            toggle-minimap-requested => {
+                root.toggle-minimap-requested();
+            }
+            toggle-metadata-requested => {
+                root.toggle-metadata-requested();
+            }
+            tool-selected(tool) => {
+                root.tool-selected(tool);
+            }
+            render-backend-selected(mode) => {
+                root.render-backend-selected(mode);
+            }
+            filtering-mode-selected(mode) => {
+                root.filtering-mode-selected(mode);
+            }
+            window-minimize => {
+                root.window-minimize();
+            }
+            window-maximize => {
+                root.window-maximize();
+            }
+            window-close => {
+                root.window-close();
+            }
         }
 
         content-area := Rectangle {
@@ -266,36 +288,88 @@ export component AppWindow inherits Window {
                 os-file-hover-pane: root.os-file-hover-pane;
                 os-file-hover-side: root.os-file-hover-side;
 
-                tab-activated(pane, id) => { root.tab-activated(pane, id); }
-                tab-close-requested(pane, id) => { root.tab-close-requested(pane, id); }
-                new-tab-requested(pane) => { root.new-tab-requested(pane); }
-                open-file-requested => { root.open-file-requested(); }
-                open-recent-file(path) => { root.open-recent-file(path); }
+                tab-activated(pane, id) => {
+                    root.tab-activated(pane, id);
+                }
+                tab-close-requested(pane, id) => {
+                    root.tab-close-requested(pane, id);
+                }
+                new-tab-requested(pane) => {
+                    root.new-tab-requested(pane);
+                }
+                open-file-requested => {
+                    root.open-file-requested();
+                }
+                open-recent-file(path) => {
+                    root.open-recent-file(path);
+                }
                 tab-context-menu(pane, id, x, y) => {
                     root.context-menu-tab-id = id;
                     root.context-menu-x = x;
                     root.context-menu-y = y;
                     root.context-menu-items = [
                         { id: "close", label: "Close", shortcut: "Ctrl+W", enabled: true, separator-after: false },
-                        { id: "close-others", label: "Close Others", shortcut: "", enabled: pane >= 0 && pane < root.panes.length ? root.panes[pane].tabs.length > 1 : false, separator-after: false },
-                        { id: "close-right", label: "Close to the Right", shortcut: "", enabled: true, separator-after: false },
+                        {
+                            id: "close-others",
+                            label: "Close Others",
+                            shortcut: "",
+                            enabled: pane >= 0 && pane < root.panes.length ? root.panes[pane].tabs.length > 1 : false,
+                            separator-after: false
+                        },
+                        {
+                            id: "close-right",
+                            label: "Close to the Right",
+                            shortcut: "",
+                            enabled: true,
+                            separator-after: false
+                        },
                         { id: "close-all", label: "Close All", shortcut: "", enabled: true, separator-after: true },
-                        { id: "open-folder", label: "Open Containing Folder", shortcut: "", enabled: true, separator-after: false },
+                        {
+                            id: "open-folder",
+                            label: "Open Containing Folder",
+                            shortcut: "",
+                            enabled: true,
+                            separator-after: false
+                        },
                         { id: "copy-path", label: "Copy Path", shortcut: "", enabled: true, separator-after: true },
-                        { id: "split-right", label: "Split Right", shortcut: "", enabled: true, separator-after: false },
+                        {
+                            id: "split-right",
+                            label: "Split Right",
+                            shortcut: "",
+                            enabled: true,
+                            separator-after: false
+                        },
                     ];
                     root.drag-source-pane = pane;
                     root.context-menu-visible = true;
                 }
-                viewport-pan(dx, dy) => { root.viewport-pan(dx, dy); }
-                viewport-zoom(f, x, y) => { root.viewport-zoom(f, x, y); }
-                viewport-fit-to-view => { root.viewport-fit-to-view(); }
-                viewport-start-pan(x, y) => { root.viewport-start-pan(x, y); }
-                viewport-end-pan => { root.viewport-end-pan(); }
-                minimap-navigate(nx, ny) => { root.minimap-navigate(nx, ny); }
-                file-dropped(path) => { root.file-dropped(path); }
-                pane-focused(pane) => { root.pane-focused(pane); }
-                split-position-changed(pos) => { root.split-position-changed(pos); }
+                viewport-pan(dx, dy) => {
+                    root.viewport-pan(dx, dy);
+                }
+                viewport-zoom(f, x, y) => {
+                    root.viewport-zoom(f, x, y);
+                }
+                viewport-fit-to-view => {
+                    root.viewport-fit-to-view();
+                }
+                viewport-start-pan(x, y) => {
+                    root.viewport-start-pan(x, y);
+                }
+                viewport-end-pan => {
+                    root.viewport-end-pan();
+                }
+                minimap-navigate(nx, ny) => {
+                    root.minimap-navigate(nx, ny);
+                }
+                file-dropped(path) => {
+                    root.file-dropped(path);
+                }
+                pane-focused(pane) => {
+                    root.pane-focused(pane);
+                }
+                split-position-changed(pos) => {
+                    root.split-position-changed(pos);
+                }
                 tab-drag-started(id, pane, title, index, abs-x, abs-y) => {
                     root.dragging-tab-id = id;
                     root.drag-source-pane = pane;
@@ -350,12 +424,24 @@ export component AppWindow inherits Window {
                     root.drop-target-pane = -1;
                     root.split-drop-side = -1;
                 }
-                zoom-slider-changed(pane, value) => { root.zoom-slider-changed(pane, value); }
-                tool-mouse-down(x, y) => { root.viewport-tool-mouse-down(x, y); }
-                tool-mouse-move(x, y) => { root.viewport-tool-mouse-move(x, y); }
-                tool-mouse-up(x, y) => { root.viewport-tool-mouse-up(x, y); }
-                cancel-tool => { root.cancel-tool(); }
-                close-active-tab => { root.close-active-tab(); }
+                zoom-slider-changed(pane, value) => {
+                    root.zoom-slider-changed(pane, value);
+                }
+                tool-mouse-down(x, y) => {
+                    root.viewport-tool-mouse-down(x, y);
+                }
+                tool-mouse-move(x, y) => {
+                    root.viewport-tool-mouse-move(x, y);
+                }
+                tool-mouse-up(x, y) => {
+                    root.viewport-tool-mouse-up(x, y);
+                }
+                cancel-tool => {
+                    root.cancel-tool();
+                }
+                close-active-tab => {
+                    root.close-active-tab();
+                }
                 tab-tooltip-changed(visible, text, cx, ty) => {
                     root.tab-tooltip-visible = visible;
                     root.tab-tooltip-text = text;
@@ -366,8 +452,12 @@ export component AppWindow inherits Window {
 
             if panes.length == 0: HomeScreen {
                 recent-files: root.recent-files;
-                open-file-requested => { root.open-file-requested(); }
-                open-recent-file(path) => { root.open-recent-file(path); }
+                open-file-requested => {
+                    root.open-file-requested();
+                }
+                open-recent-file(path) => {
+                    root.open-recent-file(path);
+                }
             }
         }
     }
@@ -423,7 +513,6 @@ export component AppWindow inherits Window {
             if id == "dismiss" {
                 return;
             }
-
             if root.context-menu-tab-id != -1 {
                 if id == "close" {
                     root.tab-close-requested(root.drag-source-pane, root.context-menu-tab-id);
@@ -465,7 +554,7 @@ export component AppWindow inherits Window {
     if root.filter-popup-visible: Rectangle {
         x: toolbar.filter-combo-abs-x;
         y: toolbar.filter-combo-abs-y;
-        width: toolbar.filter-combo-width;
+        width: toolbar.filter-combo-width + 74px;
         height: 3 * 26px + 4px;
         background: Theme.context-menu-bg;
         border-radius: 4px;
@@ -490,7 +579,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 8px;
                     Text {
-                        text: root.filtering-mode == FilteringMode.bilinear ? "✓ Bilinear" : "   Bilinear";
+                        text: root.filtering-mode == FilteringMode.bilinear ? "✓ Bilinear (Low Quality)" : "   Bilinear (Low Quality)";
                         color: Theme.text-primary;
                         font-size: 11px;
                         vertical-alignment: center;
@@ -513,7 +602,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 8px;
                     Text {
-                        text: root.filtering-mode == FilteringMode.trilinear ? "✓ Trilinear" : "   Trilinear";
+                        text: root.filtering-mode == FilteringMode.trilinear ? "✓ Trilinear (Balanced)" : "   Trilinear (Balanced)";
                         color: Theme.text-primary;
                         font-size: 11px;
                         vertical-alignment: center;
@@ -536,7 +625,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 8px;
                     Text {
-                        text: root.filtering-mode == FilteringMode.lanczos3 ? "✓ Lanczos-3" : "   Lanczos-3";
+                        text: root.filtering-mode == FilteringMode.lanczos3 ? "✓ Lanczos-3 (High Quality)" : "   Lanczos-3 (High Quality)";
                         color: Theme.text-primary;
                         font-size: 11px;
                         vertical-alignment: center;
@@ -573,7 +662,7 @@ export component AppWindow inherits Window {
             border-color: Theme.border;
 
             // Block clicks from dismissing through the card
-            TouchArea {}
+            TouchArea { }
 
             VerticalLayout {
                 padding: 20px;
@@ -595,7 +684,9 @@ export component AppWindow inherits Window {
                     horizontal-alignment: left;
                 }
 
-                Rectangle { vertical-stretch: 1; }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
 
                 HorizontalLayout {
                     spacing: 8px;
