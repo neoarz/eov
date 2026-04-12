@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { RenderMode, ToolType } from "types.slint";
-import { FolderToolButton, IconButton, MeasureToolButton, MetadataToolButton, MinimapToolButton, RoiToolButton, ToolButton, ZoomInToolButton } from "tab-controls.slint";
+import { IconButton, MeasureToolButton, MetadataToolButton, MinimapToolButton, OpenFileToolButton, RoiToolButton, ToolButton, ZoomInToolButton } from "tab-controls.slint";
 
 export component WindowToolbar inherits Rectangle {
     in property <ToolType> current-tool: ToolType.navigate;
@@ -97,7 +97,7 @@ export component WindowToolbar inherits Rectangle {
         action-cluster := HorizontalLayout {
             spacing: 4px;
 
-            open-button := FolderToolButton {
+            open-button := OpenFileToolButton {
                 tooltip-text: "Open file (right-click for recent)";
                 clicked => { root.open-file-requested(); }
                 secondary-clicked(x, y) => { root.open-recent-menu-requested(x, y); }
