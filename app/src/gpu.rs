@@ -594,9 +594,7 @@ impl GpuRenderer {
             render_pass.set_vertex_buffer(0, runtime.vertex_buffer.slice(..));
 
             for (index, draw) in frame.draws.iter().enumerate() {
-                let fine_view = tile_textures
-                    .get(&draw.tile.coord)
-                    .map(|t| t.view.clone());
+                let fine_view = tile_textures.get(&draw.tile.coord).map(|t| t.view.clone());
                 let coarse_view = draw
                     .coarse_tile
                     .as_ref()
