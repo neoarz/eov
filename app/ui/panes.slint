@@ -46,6 +46,7 @@ component PaneView inherits Rectangle {
     callback tool-mouse-up(float, float);
     callback cancel-tool();
     callback close-active-tab();
+    callback tab-tooltip-changed(bool, string, length, length);
 
     border-width: 0px;
     border-color: transparent;
@@ -68,6 +69,7 @@ component PaneView inherits Rectangle {
             tab-drag-started(id, pane, title, index, abs-x, abs-y) => { root.tab-drag-started(id, pane, title, index, abs-x, abs-y); }
             tab-drag-moved(abs-x, abs-y) => { root.tab-drag-moved(abs-x, abs-y); }
             tab-drag-ended(abs-x, abs-y) => { root.tab-drag-ended(abs-x, abs-y); }
+            tab-tooltip-changed(visible, text, cx, ty) => { root.tab-tooltip-changed(visible, text, cx, ty); }
         }
 
         Rectangle {
@@ -278,6 +280,7 @@ export component SplitPaneContainer inherits Rectangle {
     callback tool-mouse-up(float, float);
     callback cancel-tool();
     callback close-active-tab();
+    callback tab-tooltip-changed(bool, string, length, length);
 
     background: Theme.background;
 
@@ -328,6 +331,7 @@ export component SplitPaneContainer inherits Rectangle {
             tool-mouse-up(x, y) => { root.tool-mouse-up(x, y); }
             cancel-tool => { root.cancel-tool(); }
             close-active-tab => { root.close-active-tab(); }
+            tab-tooltip-changed(visible, text, cx, ty) => { root.tab-tooltip-changed(visible, text, cx, ty); }
         }
     }
 }

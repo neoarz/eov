@@ -345,6 +345,7 @@ component Tab inherits Rectangle {
     callback drag-started(int, int, string, length, length);
     callback drag-moved(length, length);
     callback drag-ended(length, length);
+    callback tab-tooltip-changed(bool, string, length, length);
 
     min-width: 100px;
     max-width: 200px;
@@ -418,6 +419,16 @@ component Tab inherits Rectangle {
                 root.close-requested(data.id);
             }
         }
+    }
+
+    property <bool> show-path-tooltip: touch.has-hover && !touch.drag-armed && data.path != "";
+    changed show-path-tooltip => {
+        root.tab-tooltip-changed(
+            root.show-path-tooltip,
+            data.path,
+            root.absolute-position.x + root.width / 2,
+            root.absolute-position.y + root.height + 4px,
+        );
     }
 
     HorizontalLayout {
@@ -499,6 +510,7 @@ export component TabBar inherits Rectangle {
     callback tab-drag-started(int, int, string, int, length, length);
     callback tab-drag-moved(length, length);
     callback tab-drag-ended(length, length);
+    callback tab-tooltip-changed(bool, string, length, length);
 
     height: 35px;
     background: Theme.surface;
@@ -541,6 +553,7 @@ export component TabBar inherits Rectangle {
                 drag-started(id, pane, title, abs-x, abs-y) => { root.tab-drag-started(id, pane, title, i, abs-x, abs-y); }
                 drag-moved(abs-x, abs-y) => { root.tab-drag-moved(abs-x, abs-y); }
                 drag-ended(abs-x, abs-y) => { root.tab-drag-ended(abs-x, abs-y); }
+                tab-tooltip-changed(visible, text, cx, ty) => { root.tab-tooltip-changed(visible, text, cx, ty); }
             }
 
             if !root.tabs-overflow: Rectangle {
