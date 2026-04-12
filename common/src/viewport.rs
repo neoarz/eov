@@ -14,7 +14,7 @@ pub const MIN_ZOOM: f64 = 0.001;
 pub const MAX_ZOOM: f64 = 100.0;
 
 /// Default zoom factor per mouse wheel tick
-pub const ZOOM_FACTOR: f64 = 1.3225;
+pub const ZOOM_FACTOR: f64 = 1.025;
 
 /// Animation duration for smooth zoom transitions (300ms)
 pub const ANIMATION_DURATION_MS: u64 = 300;
@@ -589,11 +589,22 @@ impl ViewportState {
 
         let anchor_screen = DVec2::new(screen_x, screen_y);
         let anchor_image = self.viewport.screen_to_image(screen_x, screen_y);
+
+        // When a zoom animation is already running, compound the new factor onto
+        // the existing target instead of the current (partially-animated) zoom.
+        // This keeps rapid scroll-wheel ticks from resetting progress and
+        // feeling sluggish.
+        let base_zoom = if self.zoom_start_time.is_some() {
+            self.target_zoom
+        } else {
+            self.viewport.zoom
+        };
+
         self.zoom_start = self.viewport.zoom;
         self.zoom_anchor_screen = anchor_screen;
         self.zoom_anchor_image = anchor_image;
         self.zoom_start_time = Some(Instant::now());
-        self.target_zoom = (self.viewport.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.target_zoom = (base_zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
 
         trace!(
             "Zoom requested: factor={}, target={}",

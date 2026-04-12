@@ -574,7 +574,7 @@ export component Viewport inherits Rectangle {
         }
 
         scroll-event(e) => {
-            let factor = e.delta-y > 0 ? 1.3225 : (1.0 / 1.3225);
+            let factor = e.delta-y > 0 ? 1.05 : (1.0 / 1.05);
             root.zoom(factor, touch.mouse-x / 1px, touch.mouse-y / 1px);
             return accept;
         }
