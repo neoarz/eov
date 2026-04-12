@@ -26,12 +26,6 @@ Windows, MacOS, and Linux are supported. Prebuilt binaries can be downloaded fro
 
 Both x86_64 and arm64 builds for all supported platforms are available. Make you sure you select the right architecture!
 
-### Example WSI Files
-
-To make testing easier, here are a few (relatively) small WSI files that can be opened by `eov`. These are clear cell renal carcinoma slides from [CPTAC-CRCC](https://www.cancerimagingarchive.net/collection/cptac-ccrcc/):
-- [C3L-00004-21.svs](https://cptac.nyc3.digitaloceanspaces.com/images/CPTAC-CCRCC/C3L-00004-21.svs) (169MB)
-- [C3L-00088-22.svs](https://cptac.nyc3.digitaloceanspaces.com/images/CPTAC-CCRCC/C3L-00088-22.svs) (322MB)
-
 ### Linux
 There are two methods of installation: AppImage and Flatpak. The AppImage is directly executable:
 
@@ -60,6 +54,12 @@ Installation via `brew` is currently a work-in-progress.
 A zip file containing a portable Windows build is available on the Releases page. Extract and run `eov.exe` within the zip to start the program. Only the portable version is available; no Windows installer is planned.
 
 If you want the `eov` command to be available via PATH (e.g. for command prompt or PowerShell) you can do this by [adding `C:/path/to/eov` to System Variables](https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574%28v%3Doffice.14%29) (given `C:/path/to/eov/eov.exe` reflects your directory structure).
+
+### Example WSI Files
+
+To make testing easier, here are a few (relatively) small WSI files that can be opened by `eov`. These are clear cell renal carcinoma slides from [CPTAC-CRCC](https://www.cancerimagingarchive.net/collection/cptac-ccrcc/):
+- [C3L-00004-21.svs](https://cptac.nyc3.digitaloceanspaces.com/images/CPTAC-CCRCC/C3L-00004-21.svs) (169MB)
+- [C3L-00088-22.svs](https://cptac.nyc3.digitaloceanspaces.com/images/CPTAC-CCRCC/C3L-00088-22.svs) (322MB)
 
 ## Overview
 
