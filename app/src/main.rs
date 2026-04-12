@@ -101,6 +101,26 @@ impl CliBackend {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum CliFilteringMode {
+    #[default]
+    Auto,
+    Bilinear,
+    Trilinear,
+    Lanczos,
+}
+
+impl CliFilteringMode {
+    fn filtering_mode_override(self) -> Option<state::FilteringMode> {
+        match self {
+            Self::Auto => None,
+            Self::Bilinear => Some(state::FilteringMode::Bilinear),
+            Self::Trilinear => Some(state::FilteringMode::Trilinear),
+            Self::Lanczos => Some(state::FilteringMode::Lanczos3),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum CliLogLevel {
     Error,
@@ -174,6 +194,10 @@ struct Cli {
     /// Shorthand for --backend gpu
     #[arg(long, action = ArgAction::SetTrue, global = true)]
     gpu: bool,
+
+    /// Texture filtering mode to use
+    #[arg(long, value_enum, default_value_t = CliFilteringMode::Auto, global = true)]
+    filtering_mode: CliFilteringMode,
 
     /// Override the tracing log level
     #[arg(long, value_enum, global = true)]
@@ -249,6 +273,7 @@ struct LaunchOptions {
     debug_mode: bool,
     files_to_open: Vec<PathBuf>,
     render_backend_override: Option<RenderBackend>,
+    filtering_mode_override: Option<state::FilteringMode>,
     log_level: Option<CliLogLevel>,
     cache_size_bytes: usize,
     max_tiles: usize,
@@ -320,6 +345,7 @@ fn parse_launch_options() -> Result<LaunchOptions> {
         debug_mode: cli.debug,
         files_to_open,
         render_backend_override,
+        filtering_mode_override: cli.filtering_mode.filtering_mode_override(),
         log_level: cli.log_level,
         cache_size_bytes,
         max_tiles,
@@ -696,6 +722,9 @@ fn main() -> Result<()> {
 
     let persisted_backend = config::load_render_backend()?;
     let persisted_filtering = config::load_filtering_mode()?;
+    let initial_filtering = launch_options
+        .filtering_mode_override
+        .or(persisted_filtering);
     let initial_backend = launch_options
         .render_backend_override
         .or(persisted_backend)
@@ -758,7 +787,7 @@ fn main() -> Result<()> {
         let mut state = state.write();
         state.gpu_backend_available = gpu_backend_available;
         state.select_render_backend(initial_backend);
-        if let Some(filtering) = persisted_filtering {
+        if let Some(filtering) = initial_filtering {
             state.select_filtering_mode(filtering);
         }
         update_render_backend(&ui, &state);
