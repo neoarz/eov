@@ -7,6 +7,7 @@ mod config;
 mod file_ops;
 mod gpu;
 mod render;
+mod stain;
 mod state;
 mod tile_loader;
 mod tools;

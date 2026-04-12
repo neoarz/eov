@@ -1,0 +1,251 @@
+name: macOS
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  release-macos:
+    name: Build macOS .app (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+
+    # ---------------------------------------------------------------
+    # Architecture matrix
+    #
+    # Each entry maps a target architecture to:
+    #   runner           – GitHub-hosted runner label
+    #   rust_target      – Rust target triple
+    #   arch_label       – human-readable arch for artifact naming
+    #
+    # To add a new architecture, append another include entry.
+    # ---------------------------------------------------------------
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+            rust_target: aarch64-apple-darwin
+            arch_label: arm64
+
+          - arch: x86_64
+            runner: macos-13
+            rust_target: x86_64-apple-darwin
+            arch_label: x86_64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install openslide pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+
+      - name: Derive release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' app/Cargo.toml | head -n 1)"
+          is_release="false"
+          tag="${GITHUB_REF_NAME}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "$tag" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)([-+][0-9A-Za-z.-]+)?$ ]]; then
+              version="${tag#v}"
+              is_release="true"
+              echo "workflow_dispatch on tag: version $version (is_release=true)"
+            else
+              version="$cargo_version"
+              tag="v${version}"
+              echo "workflow_dispatch on branch: using Cargo.toml version $version"
+            fi
+          else
+            if [[ ! "$tag" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)([-+][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Tag '$tag' is not a supported version tag" >&2
+              exit 1
+            fi
+
+            version="${tag#v}"
+            if [[ "$cargo_version" != "$version" ]]; then
+              echo "Tag version '$version' does not match app/Cargo.toml version '$cargo_version'" >&2
+              exit 1
+            fi
+            is_release="true"
+          fi
+
+          artifact_name="eov-${tag}-macos-${{ matrix.arch_label }}.zip"
+          checksum_name="${artifact_name}.sha256"
+
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "is_release=$is_release"
+            echo "artifact_name=$artifact_name"
+            echo "checksum_name=$checksum_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --target ${{ matrix.rust_target }} --bin eov
+
+      - name: Create .app bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_name="eov.app"
+          contents_dir="staging/${app_name}/Contents"
+          macos_dir="${contents_dir}/MacOS"
+          resources_dir="${contents_dir}/Resources"
+          frameworks_dir="${contents_dir}/Frameworks"
+
+          mkdir -p "$macos_dir" "$resources_dir" "$frameworks_dir"
+
+          # Copy the release binary
+          cp "target/${{ matrix.rust_target }}/release/eov" "$macos_dir/eov"
+          chmod +x "$macos_dir/eov"
+
+          # Create Info.plist
+          cat > "${contents_dir}/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>eov</string>
+            <key>CFBundleDisplayName</key>
+            <string>eov</string>
+            <key>CFBundleIdentifier</key>
+            <string>io.eosin.eov</string>
+            <key>CFBundleVersion</key>
+            <string>VERSION_PLACEHOLDER</string>
+            <key>CFBundleShortVersionString</key>
+            <string>VERSION_PLACEHOLDER</string>
+            <key>CFBundleExecutable</key>
+            <string>eov</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleSignature</key>
+            <string>????</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSSupportsAutomaticGraphicsSwitching</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Substitute the actual version into Info.plist
+          sed -i '' "s/VERSION_PLACEHOLDER/${{ steps.meta.outputs.version }}/g" "${contents_dir}/Info.plist"
+
+          # Bundle dylibs that the binary links against from Homebrew.
+          # We rewrite the binary's load commands so it finds them via
+          # @executable_path/../Frameworks/ at runtime.
+          echo "Bundling dynamic libraries..."
+
+          # Get all non-system dylibs the binary links against
+          otool -L "$macos_dir/eov" | tail -n +2 | awk '{print $1}' | while IFS= read -r dylib; do
+            # Skip system/OS frameworks and libs
+            case "$dylib" in
+              /usr/lib/*|/System/*|@rpath/*|@executable_path/*|@loader_path/*)
+                continue
+                ;;
+            esac
+
+            if [[ -f "$dylib" ]]; then
+              base="$(basename "$dylib")"
+              echo "  bundling: $base"
+              cp "$dylib" "$frameworks_dir/$base"
+              chmod 644 "$frameworks_dir/$base"
+
+              # Rewrite the binary to look for this dylib in Frameworks/
+              install_name_tool -change "$dylib" \
+                "@executable_path/../Frameworks/$base" \
+                "$macos_dir/eov"
+            fi
+          done
+
+          # Now recursively fix dylib dependencies within Frameworks/
+          changed=true
+          while $changed; do
+            changed=false
+            for fw in "$frameworks_dir"/*.dylib; do
+              [[ -f "$fw" ]] || continue
+              otool -L "$fw" | tail -n +2 | awk '{print $1}' | while IFS= read -r dep; do
+                case "$dep" in
+                  /usr/lib/*|/System/*|@rpath/*|@executable_path/*|@loader_path/*)
+                    continue
+                    ;;
+                esac
+                if [[ -f "$dep" ]]; then
+                  dep_base="$(basename "$dep")"
+                  if [[ ! -f "$frameworks_dir/$dep_base" ]]; then
+                    echo "  bundling (transitive): $dep_base"
+                    cp "$dep" "$frameworks_dir/$dep_base"
+                    chmod 644 "$frameworks_dir/$dep_base"
+                    changed=true
+                  fi
+                  install_name_tool -change "$dep" \
+                    "@executable_path/../Frameworks/$dep_base" \
+                    "$fw"
+                fi
+              done
+            done
+          done
+
+          # Fix the install name of each bundled dylib to use @rpath
+          for fw in "$frameworks_dir"/*.dylib; do
+            [[ -f "$fw" ]] || continue
+            base="$(basename "$fw")"
+            install_name_tool -id "@executable_path/../Frameworks/$base" "$fw"
+          done
+
+          echo ""
+          echo "Bundled frameworks:"
+          ls -la "$frameworks_dir/" 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "Binary load commands:"
+          otool -L "$macos_dir/eov"
+
+      - name: Create zip archive and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd staging
+          zip -r -y "../${{ steps.meta.outputs.artifact_name }}" eov.app
+          cd ..
+          shasum -a 256 "${{ steps.meta.outputs.artifact_name }}" > "${{ steps.meta.outputs.checksum_name }}"
+
+          echo "Archive contents:"
+          unzip -l "${{ steps.meta.outputs.artifact_name }}" | tail -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: |
+            ${{ steps.meta.outputs.artifact_name }}
+            ${{ steps.meta.outputs.checksum_name }}

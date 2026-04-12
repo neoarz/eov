@@ -39,6 +39,10 @@ jobs:
     name: Windows
     uses: ./.github/workflows/build-windows-zip.yml
 
+  build-macos:
+    name: macOS
+    uses: ./.github/workflows/build-macos-app.yml
+
   # ---------------------------------------------------------------
   # Publish the GitHub Release — the ONLY job allowed to create or
   # edit a release.  No other job in any workflow should use
@@ -49,7 +53,7 @@ jobs:
   # ---------------------------------------------------------------
   publish-release:
     name: Publish GitHub Release
-    needs: [build-appimage, build-flatpak, build-windows]
+    needs: [build-appimage, build-flatpak, build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
