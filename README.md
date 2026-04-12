@@ -247,4 +247,9 @@ Contributions are welcome. This project is part of the [Eosin Platform](https://
 
 ## License
 
-Apache 2.0 / MIT dual license.
+All of the code in this repository is released under Apache 2.0 / MIT dual license.
+
+### Dependency License Notes
+
+- [OpenSlide](https://openslide.org/) is released under LGPL. EOV's releases bundle OpenSlide as a dynamic library to comply with the terms of LGPL.
+- [Slint](https://slint.dev/) is used under the free license, which is permissive outside of embedded environments.
