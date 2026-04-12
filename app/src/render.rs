@@ -6,7 +6,9 @@
 use crate::AppWindow;
 use crate::blitter;
 use crate::gpu::{SurfaceSlot, TileDraw};
-use crate::state::{AppState, FilteringMode, OpenFile, PaneId, RenderBackend, TileRequestSignature};
+use crate::state::{
+    AppState, FilteringMode, OpenFile, PaneId, RenderBackend, TileRequestSignature,
+};
 use crate::tile_loader::calculate_wanted_tiles;
 use crate::tools;
 use common::{TileCache, TileCoord, TileManager, Viewport, WsiFile};
@@ -602,23 +604,25 @@ fn render_pane_to_image(
     // Trilinear blend needed for explicit Trilinear mode or adaptive Lanczos at low zoom
     let use_trilinear_blend = filtering_mode == FilteringMode::Trilinear
         || (filtering_mode == FilteringMode::Lanczos3 && lanczos_weight < 1.0);
-    let cached_coarse_tiles: Vec<_> =
-        if use_trilinear_blend && trilinear.level_fine != trilinear.level_coarse && trilinear.blend > 0.01 {
-            file.tile_manager
-                .visible_tiles_with_margin(
-                    trilinear.level_coarse,
-                    bounds.left,
-                    bounds.top,
-                    bounds.right,
-                    bounds.bottom,
-                    margin_tiles,
-                )
-                .into_iter()
-                .filter_map(|coord| tile_cache.peek(&coord).map(|data| (coord, data)))
-                .collect()
-        } else {
-            Vec::new()
-        };
+    let cached_coarse_tiles: Vec<_> = if use_trilinear_blend
+        && trilinear.level_fine != trilinear.level_coarse
+        && trilinear.blend > 0.01
+    {
+        file.tile_manager
+            .visible_tiles_with_margin(
+                trilinear.level_coarse,
+                bounds.left,
+                bounds.top,
+                bounds.right,
+                bounds.bottom,
+                margin_tiles,
+            )
+            .into_iter()
+            .filter_map(|coord| tile_cache.peek(&coord).map(|data| (coord, data)))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let loaded_tile_epoch = file.tile_loader.loaded_epoch();
     let tile_epoch_advanced = loaded_tile_epoch > last_seen_tile_epoch;
@@ -801,41 +805,45 @@ fn render_pane_to_image(
     blitter::fast_fill_rgba(buffer, 30, 30, 30, 255);
 
     // Helper: blit all fallback + fine tiles into a buffer with a given blit function
-    let blit_all_tiles = |buf: &mut [u8],
-                          blit_fn: fn(&mut [u8], u32, u32, &[u8], u32, u32, i32, i32, i32, i32)| {
-        for (fallback_tile, sx, sy, sw, sh) in &fallback_blits {
-            blit_fn(
-                buf,
-                render_width,
-                render_height,
-                &fallback_tile.data,
-                fallback_tile.width,
-                fallback_tile.height,
-                *sx, *sy, *sw, *sh,
-            );
-        }
-        for (coord, tile_data) in cached_tiles.iter() {
-            let image_x = coord.x as f64 * coord.tile_size as f64 * level_info.downsample;
-            let image_y = coord.y as f64 * coord.tile_size as f64 * level_info.downsample;
-            let image_x_end = image_x + tile_data.width as f64 * level_info.downsample;
-            let image_y_end = image_y + tile_data.height as f64 * level_info.downsample;
-            let screen_x = ((image_x - bounds.left) * vp.zoom).round() as i32;
-            let screen_y = ((image_y - bounds.top) * vp.zoom).round() as i32;
-            let screen_x_end = ((image_x_end - bounds.left) * vp.zoom).round() as i32;
-            let screen_y_end = ((image_y_end - bounds.top) * vp.zoom).round() as i32;
-            blit_fn(
-                buf,
-                render_width,
-                render_height,
-                &tile_data.data,
-                tile_data.width,
-                tile_data.height,
-                screen_x, screen_y,
-                screen_x_end - screen_x,
-                screen_y_end - screen_y,
-            );
-        }
-    };
+    let blit_all_tiles =
+        |buf: &mut [u8], blit_fn: fn(&mut [u8], u32, u32, &[u8], u32, u32, i32, i32, i32, i32)| {
+            for (fallback_tile, sx, sy, sw, sh) in &fallback_blits {
+                blit_fn(
+                    buf,
+                    render_width,
+                    render_height,
+                    &fallback_tile.data,
+                    fallback_tile.width,
+                    fallback_tile.height,
+                    *sx,
+                    *sy,
+                    *sw,
+                    *sh,
+                );
+            }
+            for (coord, tile_data) in cached_tiles.iter() {
+                let image_x = coord.x as f64 * coord.tile_size as f64 * level_info.downsample;
+                let image_y = coord.y as f64 * coord.tile_size as f64 * level_info.downsample;
+                let image_x_end = image_x + tile_data.width as f64 * level_info.downsample;
+                let image_y_end = image_y + tile_data.height as f64 * level_info.downsample;
+                let screen_x = ((image_x - bounds.left) * vp.zoom).round() as i32;
+                let screen_y = ((image_y - bounds.top) * vp.zoom).round() as i32;
+                let screen_x_end = ((image_x_end - bounds.left) * vp.zoom).round() as i32;
+                let screen_y_end = ((image_y_end - bounds.top) * vp.zoom).round() as i32;
+                blit_fn(
+                    buf,
+                    render_width,
+                    render_height,
+                    &tile_data.data,
+                    tile_data.width,
+                    tile_data.height,
+                    screen_x,
+                    screen_y,
+                    screen_x_end - screen_x,
+                    screen_y_end - screen_y,
+                );
+            }
+        };
 
     // Helper: apply trilinear coarse-level blend into a buffer
     let apply_trilinear_coarse = |buf: &mut [u8]| {
@@ -863,7 +871,8 @@ fn render_pane_to_image(
                 &tile_data.data,
                 tile_data.width,
                 tile_data.height,
-                screen_x, screen_y,
+                screen_x,
+                screen_y,
                 screen_x_end - screen_x,
                 screen_y_end - screen_y,
             );

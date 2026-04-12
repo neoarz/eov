@@ -1,12 +1,11 @@
 use crate::config;
 use crate::state::{self, AppState, FilteringMode, PaneId, RenderBackend};
 use crate::{
-    AppWindow, FilteringMode as SlintFilteringMode, RenderMode, ToolType,
-    build_recent_menu_items, copy_text_to_clipboard,
-    handle_tool_mouse_down, handle_tool_mouse_move, handle_tool_mouse_up, insert_pane_ui_state,
-    open_file, pane_from_index, refresh_tab_ui, request_render_loop, slider_value_to_zoom,
-    update_filtering_mode, update_render_backend, update_tabs, update_tool_overlays,
-    update_tool_state,
+    AppWindow, FilteringMode as SlintFilteringMode, RenderMode, ToolType, build_recent_menu_items,
+    copy_text_to_clipboard, handle_tool_mouse_down, handle_tool_mouse_move, handle_tool_mouse_up,
+    insert_pane_ui_state, open_file, pane_from_index, refresh_tab_ui, request_render_loop,
+    slider_value_to_zoom, update_filtering_mode, update_render_backend, update_tabs,
+    update_tool_overlays, update_tool_state,
 };
 use common::TileCache;
 use common::viewport::ZOOM_FACTOR;
@@ -558,7 +557,10 @@ pub fn setup_callbacks(
 
             let (current_mode, is_cpu) = {
                 let state = state_handle.read();
-                (state.filtering_mode, state.render_backend == RenderBackend::Cpu)
+                (
+                    state.filtering_mode,
+                    state.render_backend == RenderBackend::Cpu,
+                )
             };
             let is_lanczos = matches!(mode, FilteringMode::Lanczos3);
             let was_lanczos = matches!(current_mode, FilteringMode::Lanczos3);
@@ -569,9 +571,7 @@ pub fn setup_callbacks(
                     ui.set_lanczos_confirm_visible(true);
                 }
             } else {
-                apply_filtering_mode(
-                    &state_handle, &tile_cache, &render_timer, &ui_weak, mode,
-                );
+                apply_filtering_mode(&state_handle, &tile_cache, &render_timer, &ui_weak, mode);
             }
         });
     }
@@ -607,7 +607,11 @@ pub fn setup_callbacks(
                 }
             } else {
                 apply_filtering_mode(
-                    &state_handle, &tile_cache, &render_timer, &ui_weak, FilteringMode::Lanczos3,
+                    &state_handle,
+                    &tile_cache,
+                    &render_timer,
+                    &ui_weak,
+                    FilteringMode::Lanczos3,
                 );
             }
         });
@@ -641,7 +645,11 @@ pub fn setup_callbacks(
                 }
             }
             apply_filtering_mode(
-                &state_handle, &tile_cache, &render_timer, &ui_weak, FilteringMode::Trilinear,
+                &state_handle,
+                &tile_cache,
+                &render_timer,
+                &ui_weak,
+                FilteringMode::Trilinear,
             );
         });
     }
