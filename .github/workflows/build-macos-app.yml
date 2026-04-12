@@ -105,6 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export OPENSLIDE_LIB_DIR="$(brew --prefix openslide)/lib"
           cargo build --release --target ${{ matrix.rust_target }} --bin eov
 
       - name: Create .app bundle
