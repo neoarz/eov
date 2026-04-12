@@ -169,7 +169,7 @@ jobs:
           echo "Bundling dynamic libraries..."
 
           # Get all non-system dylibs the binary links against
-          otool -L "$macos_dir/eov" | tail -n +2 | awk '{print $1}' | while IFS= read -r dylib; do
+          while IFS= read -r dylib; do
             # Skip system/OS frameworks and libs
             case "$dylib" in
               /usr/lib/*|/System/*|@rpath/*|@executable_path/*|@loader_path/*)
@@ -188,7 +188,7 @@ jobs:
                 "@executable_path/../Frameworks/$base" \
                 "$macos_dir/eov"
             fi
-          done
+          done < <(otool -L "$macos_dir/eov" | tail -n +2 | awk '{print $1}')
 
           # Now recursively fix dylib dependencies within Frameworks/
           changed=true
@@ -196,7 +196,7 @@ jobs:
             changed=false
             for fw in "$frameworks_dir"/*.dylib; do
               [[ -f "$fw" ]] || continue
-              otool -L "$fw" | tail -n +2 | awk '{print $1}' | while IFS= read -r dep; do
+              while IFS= read -r dep; do
                 case "$dep" in
                   /usr/lib/*|/System/*|@rpath/*|@executable_path/*|@loader_path/*)
                     continue
@@ -214,7 +214,7 @@ jobs:
                     "@executable_path/../Frameworks/$dep_base" \
                     "$fw"
                 fi
-              done
+              done < <(otool -L "$fw" | tail -n +2 | awk '{print $1}')
             done
           done
 
@@ -224,6 +224,18 @@ jobs:
             base="$(basename "$fw")"
             install_name_tool -id "@executable_path/../Frameworks/$base" "$fw"
           done
+
+          # Ad-hoc code sign all bundled dylibs and the main binary.
+          # On Apple Silicon, macOS requires valid signatures on all Mach-O
+          # files. install_name_tool invalidates existing signatures, so we
+          # must re-sign everything after all modifications are complete.
+          echo "Ad-hoc signing bundled frameworks..."
+          for fw in "$frameworks_dir"/*.dylib; do
+            [[ -f "$fw" ]] || continue
+            codesign --force --sign - "$fw"
+          done
+          echo "Ad-hoc signing main binary..."
+          codesign --force --sign - "$macos_dir/eov"
 
           echo ""
           echo "Bundled frameworks:"
