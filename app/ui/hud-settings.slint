@@ -122,29 +122,6 @@ export component HudSettingsPanel inherits Rectangle {
                 font-weight: 700;
                 vertical-alignment: center;
             }
-
-            if root.has-adjustments: Rectangle {
-                x: parent.width - self.width - 8px;
-                y: (parent.height - self.height) / 2;
-                width: reset-text.preferred-width + 12px;
-                height: 20px;
-                border-radius: 3px;
-                background: reset-touch.has-hover ? #ffffff22 : transparent;
-
-                reset-touch := TouchArea {
-                    clicked => {
-                        root.reset-adjustments();
-                    }
-                }
-
-                reset-text := Text {
-                    text: "Reset";
-                    color: #4da3d9;
-                    font-size: 10px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
         }
 
         Rectangle {

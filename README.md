@@ -84,7 +84,9 @@ Current capabilities include:
 ## Screenshots
 
 <p align="center">
-    <img src="images/screenshot.webp" width="512">
+    <img src="images/screenshot-0.webp" width="512">
+    &nbsp;
+    <img src="images/screenshot-1.webp" width="512">
     &nbsp;
     <img src="images/screenshot-2.webp" width="512">
 </p>
