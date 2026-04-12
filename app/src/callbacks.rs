@@ -528,7 +528,7 @@ pub fn setup_callbacks(
         });
     }
 
-    // Filtering mode selection with Lanczos confirmation dialog
+    // Filtering mode selection with Lanczos confirmation dialog (CPU only)
     {
         let state_handle = Arc::clone(&state);
         let tile_cache = Arc::clone(&tile_cache);
@@ -542,46 +542,50 @@ pub fn setup_callbacks(
                 SlintFilteringMode::Lanczos3 => FilteringMode::Lanczos3,
             };
 
-            let current_mode = state_handle.read().filtering_mode;
+            let (current_mode, is_cpu) = {
+                let state = state_handle.read();
+                (state.filtering_mode, state.render_backend == RenderBackend::Cpu)
+            };
             let is_lanczos = matches!(mode, FilteringMode::Lanczos3);
             let was_lanczos = matches!(current_mode, FilteringMode::Lanczos3);
 
-            // If switching into a Lanczos mode, show confirmation dialog
-            if is_lanczos && !was_lanczos {
-                let state_handle = Arc::clone(&state_handle);
-                let tile_cache = Arc::clone(&tile_cache);
-                let render_timer = Rc::clone(&render_timer);
-                let ui_weak = ui_weak.clone();
-
-                let confirmed = rfd::MessageDialog::new()
-                    .set_level(rfd::MessageLevel::Warning)
-                    .set_title("Lanczos Filtering")
-                    .set_description(
-                        "Lanczos filtering is computationally expensive and may \
-                         significantly degrade rendering performance.\n\n\
-                         Are you sure you want to enable it?"
-                    )
-                    .set_buttons(rfd::MessageButtons::OkCancelCustom(
-                        "Confirm".to_string(),
-                        "Cancel".to_string(),
-                    ))
-                    .show();
-
-                if confirmed == rfd::MessageDialogResult::Custom("Confirm".to_string()) {
-                    apply_filtering_mode(
-                        &state_handle, &tile_cache, &render_timer, &ui_weak, mode,
-                    );
-                } else {
-                    // Revert combobox to current mode
-                    if let Some(ui) = ui_weak.upgrade() {
-                        let state = state_handle.read();
-                        update_filtering_mode(&ui, &state);
-                    }
+            // If switching into Lanczos on CPU, show in-window confirmation dialog
+            if is_lanczos && !was_lanczos && is_cpu {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_lanczos_confirm_visible(true);
                 }
             } else {
                 apply_filtering_mode(
                     &state_handle, &tile_cache, &render_timer, &ui_weak, mode,
                 );
+            }
+        });
+    }
+
+    // Lanczos confirmation dialog accepted
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_lanczos_confirm_accepted(move || {
+            apply_filtering_mode(
+                &state_handle, &tile_cache, &render_timer, &ui_weak, FilteringMode::Lanczos3,
+            );
+        });
+    }
+
+    // Lanczos confirmation dialog cancelled
+    {
+        let state_handle = Arc::clone(&state);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_lanczos_confirm_cancelled(move || {
+            // Revert combobox to current mode
+            if let Some(ui) = ui_weak.upgrade() {
+                let state = state_handle.read();
+                update_filtering_mode(&ui, &state);
             }
         });
     }

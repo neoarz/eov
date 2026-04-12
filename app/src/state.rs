@@ -24,9 +24,9 @@ pub enum RenderBackend {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FilteringMode {
     /// Bilinear interpolation within a single mip level
-    #[default]
     Bilinear,
     /// Trilinear: bilinear + mip-level blending
+    #[default]
     Trilinear,
     /// Lanczos-3 (a=3) resampling kernel
     Lanczos3,

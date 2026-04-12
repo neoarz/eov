@@ -81,6 +81,10 @@ export component AppWindow inherits Window {
     in-out property <int> context-menu-tab-id: -1;
 
     in-out property <bool> filter-popup-visible: false;
+    in-out property <bool> lanczos-confirm-visible: false;
+
+    callback lanczos-confirm-accepted();
+    callback lanczos-confirm-cancelled();
 
     in-out property <ToolType> current-tool: ToolType.navigate;
     in-out property <ROIRect> primary-roi-rect: { x: 0, y: 0, width: 0, height: 0, visible: false };
@@ -94,7 +98,7 @@ export component AppWindow inherits Window {
     in-out property <float> fps: 0;
     in-out property <RenderMode> render-mode: RenderMode.cpu;
     in-out property <bool> gpu-rendering-available: false;
-    in-out property <FilteringMode> filtering-mode: FilteringMode.bilinear;
+    in-out property <FilteringMode> filtering-mode: FilteringMode.trilinear;
     in-out property <bool> show-minimap: true;
     in-out property <bool> show-metadata: false;
 
@@ -534,6 +538,110 @@ export component AppWindow inherits Window {
                         color: Theme.text-primary;
                         font-size: 11px;
                         vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // Lanczos CPU confirmation dialog (centered modal)
+    if root.lanczos-confirm-visible: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: #00000088;
+
+        TouchArea {
+            clicked => {
+                root.lanczos-confirm-visible = false;
+                root.lanczos-confirm-cancelled();
+            }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 380px;
+            height: 180px;
+            background: Theme.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            // Block clicks from dismissing through the card
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: "Lanczos Filtering (CPU)";
+                    color: Theme.text-primary;
+                    font-size: 14px;
+                    font-weight: 600;
+                    horizontal-alignment: left;
+                }
+
+                Text {
+                    text: "Lanczos-3 filtering on the CPU renderer is very slow and will significantly degrade rendering performance.\n\nAre you sure you want to enable it?";
+                    color: Theme.text-secondary;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    horizontal-alignment: left;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    Rectangle {
+                        width: 72px;
+                        height: 28px;
+                        border-radius: 4px;
+                        background: cancel-touch.has-hover ? Theme.surface-hover : Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+
+                        cancel-touch := TouchArea {
+                            clicked => {
+                                root.lanczos-confirm-visible = false;
+                                root.lanczos-confirm-cancelled();
+                            }
+                        }
+
+                        Text {
+                            text: "Cancel";
+                            color: Theme.text-primary;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 72px;
+                        height: 28px;
+                        border-radius: 4px;
+                        background: confirm-touch.has-hover ? #1177bb : Theme.accent;
+
+                        confirm-touch := TouchArea {
+                            clicked => {
+                                root.lanczos-confirm-visible = false;
+                                root.lanczos-confirm-accepted();
+                            }
+                        }
+
+                        Text {
+                            text: "Confirm";
+                            color: white;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }

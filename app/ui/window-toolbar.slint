@@ -9,7 +9,7 @@ export component WindowToolbar inherits Rectangle {
     in property <bool> show-minimap: true;
     in property <bool> show-metadata: false;
     in property <bool> use-native-window-controls: false;
-    in property <FilteringMode> filtering-mode: FilteringMode.bilinear;
+    in property <FilteringMode> filtering-mode: FilteringMode.trilinear;
     in property <int> filtering-mode-index: filtering-mode == FilteringMode.bilinear ? 0
         : filtering-mode == FilteringMode.trilinear ? 1
         : 2;
