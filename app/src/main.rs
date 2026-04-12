@@ -697,7 +697,7 @@ fn main() -> Result<()> {
     let initial_backend = launch_options
         .render_backend_override
         .or(persisted_backend)
-        .unwrap_or(RenderBackend::Cpu);
+        .unwrap_or(RenderBackend::Gpu);
 
     if launch_options.debug_mode {
         info!("Debug mode enabled - FPS overlay will be shown");
