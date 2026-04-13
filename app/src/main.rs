@@ -169,12 +169,22 @@ enum CliCommand {
     name = "eov",
     version,
     about = "A lightweight, cross-platform WSI viewer.",
-    propagate_version = true
+    propagate_version = true,
+    after_help = "PANE LAYOUT:\n  \
+    Positional arguments define pane splits. Each argument is a comma-separated\n  \
+    list of files to open as tabs in one pane. The last file in each group\n  \
+    becomes the active tab.\n\n  \
+    Examples:\n    \
+      eov slide.svs                       # one pane, one tab\n    \
+      eov a.svs,b.svs                     # one pane, two tabs (b.svs active)\n    \
+      eov a.svs,b.svs c.tif d.svs         # three panes"
 )]
 struct Cli {
-    /// One or more WSI/image files to open in the viewer
+    /// Pane groups to open: each arg is a comma-separated list of files
+    /// forming tabs in one pane (last file = active tab); separate args
+    /// create separate panes
     #[arg(value_name = "FILES")]
-    files: Vec<PathBuf>,
+    pane_groups: Vec<String>,
 
     #[command(subcommand)]
     command: Option<CliCommand>,
@@ -269,9 +279,15 @@ struct WindowGeometry {
     y: Option<i32>,
 }
 
+/// A group of files to open as tabs in a single pane.
+struct PaneSpec {
+    /// Files to open as tabs, in order.
+    files: Vec<PathBuf>,
+}
+
 struct LaunchOptions {
     debug_mode: bool,
-    files_to_open: Vec<PathBuf>,
+    panes_to_open: Vec<PaneSpec>,
     render_backend_override: Option<RenderBackend>,
     filtering_mode_override: Option<state::FilteringMode>,
     log_level: Option<CliLogLevel>,
@@ -294,7 +310,7 @@ fn parse_launch_options() -> Result<LaunchOptions> {
     let max_tiles = usize::try_from(cli.max_tiles)
         .map_err(|_| anyhow::anyhow!("--max-tiles is too large for this platform"))?;
 
-    if cli.command.is_some() && !cli.files.is_empty() {
+    if cli.command.is_some() && !cli.pane_groups.is_empty() {
         bail!("file arguments cannot be combined with a subcommand");
     }
 
@@ -320,12 +336,22 @@ fn parse_launch_options() -> Result<LaunchOptions> {
         (None, None) => None,
     };
 
-    let files_to_open = cli
-        .files
+    let panes_to_open = cli
+        .pane_groups
         .into_iter()
-        .map(|path| {
-            validate_input_file(&path)?;
-            Ok(path)
+        .map(|group| {
+            let files = group
+                .split(',')
+                .map(|s| {
+                    let path = PathBuf::from(s.trim());
+                    validate_input_file(&path)?;
+                    Ok(path)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if files.is_empty() {
+                bail!("empty pane group in arguments");
+            }
+            Ok(PaneSpec { files })
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -343,7 +369,7 @@ fn parse_launch_options() -> Result<LaunchOptions> {
 
     Ok(LaunchOptions {
         debug_mode: cli.debug,
-        files_to_open,
+        panes_to_open,
         render_backend_override,
         filtering_mode_override: cli.filtering_mode.filtering_mode_override(),
         log_level: cli.log_level,
@@ -734,10 +760,16 @@ fn main() -> Result<()> {
         info!("Debug mode enabled - FPS overlay will be shown");
     }
 
-    if !launch_options.files_to_open.is_empty() {
+    if !launch_options.panes_to_open.is_empty() {
+        let total_files: usize = launch_options
+            .panes_to_open
+            .iter()
+            .map(|p| p.files.len())
+            .sum();
         info!(
-            "Opening {} file(s) from command line",
-            launch_options.files_to_open.len()
+            "Opening {} file(s) across {} pane(s) from command line",
+            total_files,
+            launch_options.panes_to_open.len()
         );
     }
 
@@ -804,7 +836,7 @@ fn main() -> Result<()> {
         update_recent_files(&ui, &state);
     }
 
-    if launch_options.files_to_open.is_empty() {
+    if launch_options.panes_to_open.is_empty() {
         {
             let mut state = state.write();
             state.create_home_tab();
@@ -812,20 +844,20 @@ fn main() -> Result<()> {
         let state = state.read();
         update_tabs(&ui, &state);
     } else {
-        prepare_launch_panes(&ui, &state, launch_options.files_to_open.len());
+        prepare_launch_panes(&ui, &state, launch_options.panes_to_open.len());
     }
 
-    for (pane_index, path) in launch_options.files_to_open.into_iter().enumerate() {
-        if pane_index > 0 {
-            let pane = PaneId(pane_index);
-            {
-                let mut state = state.write();
-                state.set_focused_pane(pane);
-            }
-            ui.set_focused_pane(pane.as_index());
+    for (pane_index, pane_spec) in launch_options.panes_to_open.into_iter().enumerate() {
+        let pane = PaneId(pane_index);
+        {
+            let mut state = state.write();
+            state.set_focused_pane(pane);
         }
+        ui.set_focused_pane(pane.as_index());
 
-        open_file(&ui, &state, &tile_cache, &render_timer, path);
+        for path in pane_spec.files {
+            open_file(&ui, &state, &tile_cache, &render_timer, path);
+        }
     }
 
     if state.read().split_enabled {
