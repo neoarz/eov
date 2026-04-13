@@ -95,7 +95,7 @@ export component WindowToolbar inherits Rectangle {
             }
 
             navigate-button := SvgToolButton {
-                icon-source: @image-url("navigate.svg");
+                icon-source: @image-url("icons/navigate.svg");
                 tooltip-text: "Navigate (Pan)";
                 is-active: root.current-tool == ToolType.navigate;
                 clicked => {
@@ -112,7 +112,7 @@ export component WindowToolbar inherits Rectangle {
             }
 
             measure-button := SvgToolButton {
-                icon-source: @image-url("measure.svg");
+                icon-source: @image-url("icons/measure.svg");
                 tooltip-text: "Measure distance";
                 is-active: root.current-tool == ToolType.measure-distance;
                 clicked => {
@@ -217,7 +217,7 @@ export component WindowToolbar inherits Rectangle {
         VerticalLayout {
             alignment: center;
             Image {
-                source: @image-url("logo.png");
+                source: @image-url("icons/logo.png");
                 height: 20px;
                 image-fit: contain;
             }

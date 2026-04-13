@@ -149,7 +149,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             fit-btn := HudButton {
-                icon-source: @image-url("fit-view.svg");
+                icon-source: @image-url("icons/fit-view.svg");
                 tooltip-text: "Fit to view";
                 clicked => {
                     root.fit-to-view();
@@ -157,7 +157,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             zoom-in-btn := HudButton {
-                icon-source: @image-url("zoom-in.svg");
+                icon-source: @image-url("icons/zoom-in.svg");
                 tooltip-text: "Zoom in";
                 clicked => {
                     root.zoom-in();
@@ -165,7 +165,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             zoom-out-btn := HudButton {
-                icon-source: @image-url("zoom-out.svg");
+                icon-source: @image-url("icons/zoom-out.svg");
                 tooltip-text: "Zoom out";
                 clicked => {
                     root.zoom-out();
@@ -173,7 +173,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             scale-btn := HudButton {
-                icon-source: @image-url("toggle-measure.svg");
+                icon-source: @image-url("icons/toggle-measure.svg");
                 tooltip-text: "Toggle scale bar";
                 active: root.show-scale-bar;
                 clicked => {
@@ -182,7 +182,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             adjust-btn := HudButton {
-                icon-source: @image-url("settings.svg");
+                icon-source: @image-url("icons/settings.svg");
                 tooltip-text: "Adjustments";
                 active: root.dropdown-open || root.has-adjustments;
                 clicked => {
