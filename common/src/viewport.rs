@@ -25,6 +25,18 @@ pub const NAVIGATION_DURATION_MS: u64 = 300;
 /// Pan inertia duration (500ms for more perceptible glide)
 pub const INERTIA_DURATION_MS: u64 = 500;
 
+/// Recent drag history window used to estimate release velocity.
+pub const INERTIA_SAMPLE_WINDOW_MS: u64 = 75;
+
+/// Minimum time span used when converting recent drag motion into a velocity.
+pub const INERTIA_MIN_SAMPLE_SPAN_MS: u64 = 8;
+
+/// Idle time after the last drag movement over which release velocity decays to zero.
+pub const INERTIA_RELEASE_IDLE_MS: u64 = 40;
+
+/// Upper bound for pan flick velocity in screen pixels per second.
+pub const INERTIA_MAX_VELOCITY: f64 = 8_000.0;
+
 /// Minimum drag displacement (in screen pixels) required to trigger inertia.
 /// Prevents tiny mouse jitter during a quick catch-click from restarting momentum.
 pub const INERTIA_MIN_DISPLACEMENT: f64 = 5.0;
@@ -219,8 +231,8 @@ pub struct ViewportState {
     is_dragging: bool,
     /// Last drag position
     drag_start: DVec2,
-    /// Velocity samples for averaging (screen pixels per second)
-    velocity_samples: Vec<(DVec2, Instant)>,
+    /// Recent absolute drag samples used to estimate release velocity.
+    drag_samples: Vec<(DVec2, Instant)>,
     /// Inertia animation: initial velocity when drag ended
     inertia_start_velocity: DVec2,
     /// Inertia animation: start time
@@ -270,7 +282,7 @@ impl ViewportState {
             viewport,
             is_dragging: false,
             drag_start: DVec2::ZERO,
-            velocity_samples: Vec::with_capacity(10),
+            drag_samples: Vec::with_capacity(8),
             inertia_start_velocity: DVec2::ZERO,
             inertia_start_time: None,
             target_zoom: initial_zoom,
@@ -292,13 +304,15 @@ impl ViewportState {
 
     /// Start a drag operation
     pub fn start_drag(&mut self, x: f64, y: f64) {
+        let now = Instant::now();
         self.is_dragging = true;
         self.drag_start = DVec2::new(x, y);
-        self.velocity_samples.clear();
+        self.drag_samples.clear();
+        self.drag_samples.push((self.drag_start, now));
         self.inertia_start_time = None; // Cancel any ongoing inertia
         self.zoom_start_time = None; // Cancel any ongoing zoom animation to prevent snap-back
         self.navigation_start_time = None; // Cancel any framing animation
-        self.last_update = Instant::now();
+        self.last_update = now;
     }
 
     /// Continue a drag operation
@@ -311,11 +325,17 @@ impl ViewportState {
         let current = DVec2::new(x, y);
         let delta = current - self.drag_start;
 
-        // Store sample with timestamp for velocity calculation
-        self.velocity_samples.push((delta, now));
-        // Keep only recent samples (last 100ms)
-        let cutoff = now - Duration::from_millis(100);
-        self.velocity_samples.retain(|(_, t)| *t > cutoff);
+        if self
+            .drag_samples
+            .last()
+            .map(|(position, _)| *position != current)
+            .unwrap_or(true)
+        {
+            self.drag_samples.push((current, now));
+            let cutoff = now - Duration::from_millis(INERTIA_SAMPLE_WINDOW_MS);
+            self.drag_samples
+                .retain(|(_, sample_time)| *sample_time >= cutoff);
+        }
 
         // Pan viewport
         self.viewport.pan(delta.x, delta.y);
@@ -337,43 +357,45 @@ impl ViewportState {
             return;
         }
 
+        let now = Instant::now();
         self.is_dragging = false;
 
-        // Calculate average velocity from recent samples
-        if self.velocity_samples.len() >= 2 {
-            let now = Instant::now();
-            let mut total_delta = DVec2::ZERO;
-            let mut total_time = 0.0;
+        if let (Some((first_position, first_time)), Some((last_position, last_time))) = (
+            self.drag_samples.first().copied(),
+            self.drag_samples.last().copied(),
+        ) {
+            let idle_secs = now.duration_since(last_time).as_secs_f64();
+            let idle_decay = (1.0
+                - idle_secs / Duration::from_millis(INERTIA_RELEASE_IDLE_MS).as_secs_f64())
+            .clamp(0.0, 1.0);
+            let displacement = last_position - first_position;
+            let sample_span = last_time.duration_since(first_time).as_secs_f64();
+            let effective_span =
+                sample_span.max(Duration::from_millis(INERTIA_MIN_SAMPLE_SPAN_MS).as_secs_f64());
 
-            for (delta, _) in &self.velocity_samples {
-                total_delta += *delta;
-            }
+            if displacement.length() >= INERTIA_MIN_DISPLACEMENT && idle_decay > 0.0 {
+                let mut velocity = displacement / effective_span;
+                let speed = velocity.length();
+                if speed > INERTIA_MAX_VELOCITY {
+                    velocity = velocity / speed * INERTIA_MAX_VELOCITY;
+                }
+                velocity *= idle_decay;
 
-            // Calculate time span of samples
-            if let (Some((_, first_time)), Some((_, last_time))) =
-                (self.velocity_samples.first(), self.velocity_samples.last())
-            {
-                total_time = last_time.duration_since(*first_time).as_secs_f64();
-            }
-
-            if total_time > 0.001 && total_delta.length() >= INERTIA_MIN_DISPLACEMENT {
-                // Velocity in screen pixels per second
-                let velocity = total_delta / total_time;
-                // Only apply inertia if velocity is significant (lowered threshold for responsiveness)
                 if velocity.length() > 20.0 {
                     self.inertia_start_velocity = velocity;
                     self.inertia_start_time = Some(now);
                     trace!(
-                        "Starting pan inertia: velocity={:?} length={:.1}",
+                        "Starting pan inertia: velocity={:?} length={:.1} idle_decay={:.2}",
                         velocity,
-                        velocity.length()
+                        velocity.length(),
+                        idle_decay
                     );
                 }
             }
         }
 
-        self.velocity_samples.clear();
-        self.last_update = Instant::now();
+        self.drag_samples.clear();
+        self.last_update = now;
     }
 
     /// Update animations (call every frame). Returns true if still animating.
@@ -798,5 +820,57 @@ mod tests {
 
         // Center should have moved
         assert!((state.viewport.center - initial_center).length() > 0.1);
+    }
+
+    #[test]
+    fn test_fast_release_starts_pan_inertia() {
+        let mut state = ViewportState::new(800.0, 600.0, 10000.0, 10000.0);
+        let now = Instant::now();
+
+        state.is_dragging = true;
+        state.drag_samples = vec![
+            (DVec2::new(400.0, 300.0), now - Duration::from_millis(18)),
+            (DVec2::new(520.0, 300.0), now - Duration::from_millis(4)),
+        ];
+        state.end_drag();
+
+        assert!(state.inertia_start_time.is_some());
+    }
+
+    #[test]
+    fn test_stopping_before_release_cancels_pan_inertia() {
+        let mut state = ViewportState::new(800.0, 600.0, 10000.0, 10000.0);
+        let now = Instant::now();
+
+        state.is_dragging = true;
+        state.drag_samples = vec![
+            (
+                DVec2::new(400.0, 300.0),
+                now - Duration::from_millis(INERTIA_RELEASE_IDLE_MS + 28),
+            ),
+            (
+                DVec2::new(520.0, 300.0),
+                now - Duration::from_millis(INERTIA_RELEASE_IDLE_MS + 12),
+            ),
+        ];
+        state.end_drag();
+
+        assert!(state.inertia_start_time.is_none());
+    }
+
+    #[test]
+    fn test_pan_inertia_velocity_is_bounded() {
+        let mut state = ViewportState::new(800.0, 600.0, 10000.0, 10000.0);
+        let now = Instant::now();
+
+        state.is_dragging = true;
+        state.drag_samples = vec![
+            (DVec2::new(400.0, 300.0), now - Duration::from_millis(1)),
+            (DVec2::new(1000.0, 300.0), now),
+        ];
+        state.end_drag();
+
+        assert!(state.inertia_start_time.is_some());
+        assert!(state.inertia_start_velocity.length() <= INERTIA_MAX_VELOCITY + 0.1);
     }
 }
