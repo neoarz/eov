@@ -1101,6 +1101,7 @@ dependencies = [
  "lru",
  "openslide-rs",
  "parking_lot",
+ "rayon",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

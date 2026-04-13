@@ -303,6 +303,45 @@ fn toggle_metadata_visibility(ui: &AppWindow, state: &Arc<RwLock<AppState>>) {
     ui.set_show_metadata(show_metadata);
 }
 
+/// Convert Slint export settings to common crate's `ExportSettings`.
+fn slint_to_export_settings(s: &SlintExportSettings) -> common::ExportSettings {
+    let filtering_mode = match s.filtering_mode {
+        SlintExportFilteringMode::Bilinear => FilteringMode::Bilinear,
+        SlintExportFilteringMode::Trilinear => FilteringMode::Trilinear,
+        SlintExportFilteringMode::Lanczos => FilteringMode::Lanczos3,
+    };
+    let stain_normalization = match s.stain_normalization {
+        SlintStainNormalization::None => StainNormalization::None,
+        SlintStainNormalization::Macenko => StainNormalization::Macenko,
+        SlintStainNormalization::Vahadane => StainNormalization::Vahadane,
+    };
+    common::ExportSettings {
+        dpi: s.dpi.max(1) as u32,
+        filtering_mode,
+        stain_normalization,
+        sharpness: s.sharpness,
+        gamma: s.gamma,
+        brightness: s.brightness,
+        contrast: s.contrast,
+        background_rgba: [255, 255, 255, 255],
+    }
+}
+
+/// Render an export preview/final image using the common crate's export renderer.
+fn render_export_image(
+    state: &AppState,
+    tile_cache: &Arc<TileCache>,
+    pane: PaneId,
+    slint_settings: &SlintExportSettings,
+) -> Option<common::RgbaImageData> {
+    let file_id = state.active_file_id_for_pane(pane)?;
+    let file = state.get_file(file_id)?;
+    let pane_state = file.pane_state(pane)?;
+    let viewport = &pane_state.viewport.viewport;
+    let settings = slint_to_export_settings(slint_settings);
+    common::export::render_export(&file.tile_manager, tile_cache, viewport, &settings)
+}
+
 /// Build default export settings based on the current viewport state.
 fn build_default_export_settings(state: &AppState, pane: PaneId) -> SlintExportSettings {
     let file_id = state.active_file_id_for_pane(pane);
@@ -365,20 +404,42 @@ fn build_default_export_settings(state: &AppState, pane: PaneId) -> SlintExportS
 }
 
 /// Open the export dialog, populating it with defaults derived from the current viewport.
-fn open_export_dialog(ui: &AppWindow, state: &Arc<RwLock<AppState>>, pane: PaneId) {
+fn open_export_dialog(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache: &Arc<TileCache>, pane: PaneId) {
     let settings = {
         let state = state.read();
         build_default_export_settings(&state, pane)
     };
     ui.set_export_settings(settings.clone());
 
-    // Compute initial preview info
-    let dpi = settings.dpi.max(72) as f64;
-    let scale = dpi / 96.0;
-    let viewport_w = ui.get_viewport_width() as f64;
-    let viewport_h = ui.get_viewport_height() as f64;
-    let width_px = (viewport_w * scale).round() as i32;
-    let height_px = (viewport_h * scale).round() as i32;
+    // Render preview using the common export renderer
+    let (preview_image, width_px, height_px) = {
+        let state = state.read();
+        if let Some(img) = render_export_image(&state, tile_cache, pane, &settings) {
+            let w = img.width as u32;
+            let h = img.height as u32;
+            let slint_img = if let Some(buf) = crate::blitter::create_image_buffer(&img.pixels, w, h) {
+                slint::Image::from_rgba8(buf)
+            } else {
+                slint::Image::default()
+            };
+            (slint_img, w as i32, h as i32)
+        } else {
+            // Fallback to cached viewport image
+            if let Some(image_data) = capture_pane_clipboard_image(pane) {
+                let w = image_data.width as u32;
+                let h = image_data.height as u32;
+                let slint_img = if let Some(buf) = crate::blitter::create_image_buffer(&image_data.pixels, w, h) {
+                    slint::Image::from_rgba8(buf)
+                } else {
+                    slint::Image::default()
+                };
+                (slint_img, w as i32, h as i32)
+            } else {
+                (slint::Image::default(), 0, 0)
+            }
+        }
+    };
+
     let bytes_per_pixel: f64 = if settings.format == SlintExportFormat::Png {
         4.0
     } else {
@@ -387,19 +448,6 @@ fn open_export_dialog(ui: &AppWindow, state: &Arc<RwLock<AppState>>, pane: PaneI
     };
     let estimated_bytes = (width_px as f64) * (height_px as f64) * bytes_per_pixel;
     let estimated_mb = estimated_bytes / (1024.0 * 1024.0);
-
-    // Use the current viewport content as the preview
-    let preview_image = if let Some(image_data) = capture_pane_clipboard_image(pane) {
-        let w = image_data.width as u32;
-        let h = image_data.height as u32;
-        if let Some(buf) = crate::blitter::create_image_buffer(&image_data.pixels, w, h) {
-            slint::Image::from_rgba8(buf)
-        } else {
-            slint::Image::default()
-        }
-    } else {
-        slint::Image::default()
-    };
 
     let preview_info = SlintExportPreviewInfo {
         preview_image,
@@ -584,7 +632,7 @@ pub fn setup_callbacks(
                     }
                 }
                 "viewport-export-image" => {
-                    open_export_dialog(&ui, &state_handle, pane);
+                    open_export_dialog(&ui, &state_handle, &tile_cache, pane);
                 }
                 "close" => {
                     {
@@ -1894,35 +1942,51 @@ pub fn setup_callbacks(
     }
 
     // -- Export dialog callbacks --
+    let export_debounce_timer = Rc::new(Timer::default());
     {
         let ui_weak = ui_weak.clone();
+        let debounce_timer = Rc::clone(&export_debounce_timer);
 
         ui.on_export_dialog_settings_changed(move |_settings| {
-            // Settings are tracked in the Slint property; a preview re-render
-            // will be triggered by the request-preview callback.
-            let _ = ui_weak.upgrade();
+            let ui_weak = ui_weak.clone();
+            debounce_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(300), move || {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.invoke_export_dialog_request_preview();
+                }
+            });
         });
     }
 
     {
+        let state_handle = Arc::clone(&state);
+        let tile_cache_clone = Arc::clone(&tile_cache);
         let ui_weak = ui_weak.clone();
 
         ui.on_export_dialog_request_preview(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                // Compute estimated size from current settings
                 let settings = ui.get_export_settings();
-                let dpi = settings.dpi.max(72) as f64;
-                // Assuming the current viewport size as the base resolution at 96 dpi
-                let scale = dpi / 96.0;
-                let viewport_w = ui.get_viewport_width() as f64;
-                let viewport_h = ui.get_viewport_height() as f64;
-                let width_px = (viewport_w * scale).round() as i32;
-                let height_px = (viewport_h * scale).round() as i32;
+                let state = state_handle.read();
+                let pane = state.focused_pane;
+
+                let (preview_image, width_px, height_px) =
+                    if let Some(img) = render_export_image(&state, &tile_cache_clone, pane, &settings) {
+                        let w = img.width as u32;
+                        let h = img.height as u32;
+                        let slint_img = if let Some(buf) = crate::blitter::create_image_buffer(&img.pixels, w, h) {
+                            slint::Image::from_rgba8(buf)
+                        } else {
+                            slint::Image::default()
+                        };
+                        (slint_img, w as i32, h as i32)
+                    } else {
+                        let prev = ui.get_export_preview_info();
+                        (prev.preview_image, prev.width_px, prev.height_px)
+                    };
+
                 let bytes_per_pixel: f64 =
                     if settings.format == SlintExportFormat::Png {
-                        4.0 // PNG, RGBA, rough estimate ~4 bytes compressed
+                        4.0
                     } else {
-                        // JPEG: estimate based on quality
                         let q = settings.jpeg_quality.clamp(1, 100) as f64;
                         0.3 + (q / 100.0) * 2.5
                     };
@@ -1931,7 +1995,7 @@ pub fn setup_callbacks(
                 let estimated_mb = estimated_bytes / (1024.0 * 1024.0);
 
                 let preview_info = SlintExportPreviewInfo {
-                    preview_image: ui.get_export_preview_info().preview_image,
+                    preview_image,
                     estimated_size_mb: estimated_mb as f32,
                     width_px,
                     height_px,
@@ -1943,6 +2007,7 @@ pub fn setup_callbacks(
 
     {
         let state_handle = Arc::clone(&state);
+        let tile_cache_clone = Arc::clone(&tile_cache);
         let ui_weak = ui_weak.clone();
         let toast_timer = Rc::clone(&toast_timer);
 
@@ -1967,14 +2032,12 @@ pub fn setup_callbacks(
                 .set_file_name(format!("export.{extension}"));
 
             if let Some(path) = dialog.save_file() {
-                // Use the current viewport content as the export source.
-                // A full re-render at export DPI would go here in the future.
-                let pane = {
-                    let state = state_handle.read();
-                    state.focused_pane
-                };
+                let state = state_handle.read();
+                let pane = state.focused_pane;
 
-                let image_data = capture_pane_clipboard_image(pane);
+                let image_data = render_export_image(&state, &tile_cache_clone, pane, &settings);
+                drop(state);
+
                 let Some(image_data) = image_data else {
                     ui.set_status_text(SharedString::from(
                         "No viewport image available to export",

@@ -13,8 +13,10 @@ use crate::state::{AppState, OpenFile, PaneId, TileRequestSignature};
 use crate::tile_loader::{TileLoader, calculate_wanted_tiles};
 use crate::tools;
 use common::{
-    FilteringMode, RenderBackend, StainNormalization, TileCache, TileManager, Viewport, WsiFile,
+    FilteringMode, RenderBackend, StainNormalization, TileCache, TileManager, TrilinearLevels,
+    Viewport, calculate_trilinear_levels,
 };
+use common::render::single_level_trilinear;
 use parking_lot::RwLock;
 use rayon::prelude::*;
 use slint::{ComponentHandle, Image};
@@ -22,18 +24,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::debug;
 
-/// Conservative negative LOD bias applied only to the trilinear mip path.
-/// This offsets a slight tendency to choose overly coarse mip blends while
-/// keeping the result stable.
-pub const TRILINEAR_LOD_BIAS: f64 = -0.25;
+fn trilinear_lod_bias_enabled(filtering_mode: FilteringMode) -> bool {
+    filtering_mode == FilteringMode::Trilinear
+}
 
 /// Adaptive Lanczos-to-Trilinear blending weight based on zoom level.
-///
-/// At very low zoom, trilinear filtering produces better results than Lanczos.
-/// This function returns a weight in \[0.0, 1.0\] controlling the mix:
-///   zoom >= 0.12 → 1.0 (100% Lanczos)
-///   0.07–0.12   → linear blend Lanczos → Trilinear
-///   zoom < 0.07 → 0.0 (100% Trilinear)
 fn lanczos_adaptive_weight(zoom: f64) -> f64 {
     const LANCZOS_FULL: f64 = 0.12;
     const TRILINEAR_FULL: f64 = 0.07;
@@ -44,144 +39,6 @@ fn lanczos_adaptive_weight(zoom: f64) -> f64 {
     } else {
         (zoom - TRILINEAR_FULL) / (LANCZOS_FULL - TRILINEAR_FULL)
     }
-}
-
-/// Result of trilinear level calculation
-#[derive(Debug, Clone, Copy)]
-pub struct TrilinearLevels {
-    /// The higher resolution (lower index) level
-    pub level_fine: u32,
-    /// The lower resolution (higher index) level
-    pub level_coarse: u32,
-    /// Blend factor: 0.0 = use level_fine, 1.0 = use level_coarse
-    pub blend: f64,
-    /// Continuous LOD before the optional trilinear-only bias is applied.
-    /// Kept for debugger inspection in quality tuning.
-    pub lod_before_bias: f64,
-    /// Continuous LOD after applying the trilinear-only bias and clamping.
-    pub lod_after_bias: f64,
-}
-
-fn trilinear_lod_bias_enabled(filtering_mode: FilteringMode) -> bool {
-    // Keep the correction restricted to the explicit Trilinear mode.
-    // Lanczos remains unbiased even when it internally falls back to
-    // trilinear blending at very low zoom.
-    filtering_mode == FilteringMode::Trilinear
-}
-
-fn single_level_trilinear(level: u32) -> TrilinearLevels {
-    let lod = level as f64;
-    TrilinearLevels {
-        level_fine: level,
-        level_coarse: level,
-        blend: 0.0,
-        lod_before_bias: lod,
-        lod_after_bias: lod,
-    }
-}
-
-fn continuous_trilinear_lod(
-    target_downsample: f64,
-    fine_downsample: f64,
-    coarse_downsample: f64,
-    level_fine: u32,
-) -> f64 {
-    let log_target = target_downsample.max(f64::MIN_POSITIVE).ln();
-    let log_fine = fine_downsample.max(f64::MIN_POSITIVE).ln();
-    let log_coarse = coarse_downsample.max(f64::MIN_POSITIVE).ln();
-
-    let blend = if (log_coarse - log_fine).abs() < 0.001 {
-        0.0
-    } else {
-        ((log_target - log_fine) / (log_coarse - log_fine)).clamp(0.0, 1.0)
-    };
-
-    level_fine as f64 + blend
-}
-
-fn finalize_trilinear_levels(
-    level_count: u32,
-    lod_before_bias: f64,
-    apply_lod_bias: bool,
-) -> TrilinearLevels {
-    let max_lod = level_count.saturating_sub(1) as f64;
-    let lod_after_bias = if apply_lod_bias {
-        (lod_before_bias + TRILINEAR_LOD_BIAS).clamp(0.0, max_lod)
-    } else {
-        lod_before_bias.clamp(0.0, max_lod)
-    };
-    let level_fine = lod_after_bias.floor() as u32;
-    let level_coarse = lod_after_bias.ceil() as u32;
-
-    TrilinearLevels {
-        level_fine,
-        level_coarse,
-        blend: lod_after_bias - level_fine as f64,
-        lod_before_bias,
-        lod_after_bias,
-    }
-}
-
-/// Calculate the two mip levels to blend for trilinear filtering
-pub fn calculate_trilinear_levels(
-    wsi: &WsiFile,
-    target_downsample: f64,
-    apply_lod_bias: bool,
-) -> TrilinearLevels {
-    let level_count = wsi.level_count();
-
-    if level_count == 0 {
-        return single_level_trilinear(0);
-    }
-
-    if level_count == 1 {
-        return single_level_trilinear(0);
-    }
-
-    // Find the best level (where pixel density is closest to 1:1)
-    let best_level = wsi.best_level_for_downsample(target_downsample);
-
-    let best_info = match wsi.level(best_level) {
-        Some(info) => info,
-        None => {
-            return single_level_trilinear(0);
-        }
-    };
-
-    // Determine if we should blend with the next finer or coarser level
-    // If target_downsample > best_level's downsample, we're between best and next coarser
-    // If target_downsample < best_level's downsample, we're between best and next finer
-    let (level_fine, level_coarse) = if target_downsample >= best_info.downsample {
-        // Blend between best (fine) and next coarser level
-        if best_level + 1 < level_count {
-            (best_level, best_level + 1)
-        } else {
-            // At coarsest level, no blending
-            return single_level_trilinear(best_level);
-        }
-    } else {
-        // Blend between previous finer level and best (coarse)
-        if best_level > 0 {
-            (best_level - 1, best_level)
-        } else {
-            // At finest level, no blending
-            return single_level_trilinear(0);
-        }
-    };
-
-    let lod_before_bias = match (wsi.level(level_fine), wsi.level(level_coarse)) {
-        (Some(fine_info), Some(coarse_info)) => continuous_trilinear_lod(
-            target_downsample,
-            fine_info.downsample,
-            coarse_info.downsample,
-            level_fine,
-        ),
-        _ => {
-            return single_level_trilinear(level_fine);
-        }
-    };
-
-    finalize_trilinear_levels(level_count, lod_before_bias, apply_lod_bias)
 }
 
 type CoarseBlendData = (Arc<common::TileData>, [f32; 2], [f32; 2], f32);
@@ -2413,7 +2270,7 @@ fn tile_draw_from_tile(
 
 #[cfg(test)]
 mod tests {
-    use super::{TRILINEAR_LOD_BIAS, finalize_trilinear_levels};
+    use common::render::{TRILINEAR_LOD_BIAS, finalize_trilinear_levels};
 
     #[test]
     fn trilinear_bias_shifts_lod_toward_finer_mips() {

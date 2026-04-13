@@ -31,6 +31,8 @@ anyhow = "1"
 tracing = "0.1"
 # Math utilities
 glam = "0.30"
+# Parallel iteration
+rayon = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
