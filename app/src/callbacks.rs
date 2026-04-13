@@ -1,9 +1,10 @@
 use crate::config;
-use crate::state::{self, AppState, HudSettings, PaneId};
+use crate::state::{self, AppState, HudSettings, IsolatedChannel, PaneId};
 use crate::{
     AppWindow, ExportFilteringMode as SlintExportFilteringMode, ExportFormat as SlintExportFormat,
     ExportPreviewInfo as SlintExportPreviewInfo, ExportSettings as SlintExportSettings,
-    FilteringMode as SlintFilteringMode, MeasurementUnit as SlintMeasurementUnit, RenderMode,
+    FilteringMode as SlintFilteringMode, IsolatedChannel as SlintIsolatedChannel,
+    MeasurementUnit as SlintMeasurementUnit, RenderMode,
     StainNormalization as SlintStainNormalization, ToolType, build_recent_menu_items,
     capture_pane_clipboard_image, copy_image_to_clipboard, copy_text_to_clipboard,
     crop_image_to_viewport_bounds, handle_tool_mouse_down, handle_tool_mouse_move,
@@ -314,6 +315,11 @@ fn slint_to_export_settings(s: &SlintExportSettings) -> common::ExportSettings {
         SlintStainNormalization::Macenko => StainNormalization::Macenko,
         SlintStainNormalization::Vahadane => StainNormalization::Vahadane,
     };
+    let deconv_isolated = match s.deconv_isolated_channel {
+        SlintIsolatedChannel::Hematoxylin => 1,
+        SlintIsolatedChannel::Eosin => 2,
+        _ => 0,
+    };
     common::ExportSettings {
         dpi: s.dpi.max(1) as u32,
         filtering_mode,
@@ -323,6 +329,11 @@ fn slint_to_export_settings(s: &SlintExportSettings) -> common::ExportSettings {
         brightness: s.brightness,
         contrast: s.contrast,
         background_rgba: [255, 255, 255, 255],
+        deconv_h_intensity: s.deconv_hematoxylin_intensity,
+        deconv_h_visible: s.deconv_hematoxylin_visible,
+        deconv_e_intensity: s.deconv_eosin_intensity,
+        deconv_e_visible: s.deconv_eosin_visible,
+        deconv_isolated_channel: deconv_isolated,
     }
 }
 
@@ -593,6 +604,12 @@ fn build_default_export_settings(state: &AppState, pane: PaneId) -> SlintExportS
         StainNormalization::Vahadane => SlintStainNormalization::Vahadane,
     };
 
+    let deconv_isolated = match hud.deconv_isolated_channel {
+        IsolatedChannel::Hematoxylin => SlintIsolatedChannel::Hematoxylin,
+        IsolatedChannel::Eosin => SlintIsolatedChannel::Eosin,
+        IsolatedChannel::None => SlintIsolatedChannel::None,
+    };
+
     SlintExportSettings {
         dpi: 150,
         filtering_mode: SlintExportFilteringMode::Trilinear,
@@ -601,6 +618,11 @@ fn build_default_export_settings(state: &AppState, pane: PaneId) -> SlintExportS
         brightness: hud.brightness,
         contrast: hud.contrast,
         stain_normalization: stain_norm,
+        deconv_hematoxylin_intensity: hud.deconv_hematoxylin_intensity,
+        deconv_hematoxylin_visible: hud.deconv_hematoxylin_visible,
+        deconv_eosin_intensity: hud.deconv_eosin_intensity,
+        deconv_eosin_visible: hud.deconv_eosin_visible,
+        deconv_isolated_channel: deconv_isolated,
         show_measurement: has_measurement,
         has_measurement,
         measurement_color: slint::Color::from_argb_u8(255, 46, 204, 113),

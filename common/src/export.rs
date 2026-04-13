@@ -34,6 +34,16 @@ pub struct ExportSettings {
     pub contrast: f32,
     /// Background colour (RGBA).
     pub background_rgba: [u8; 4],
+    /// Color deconvolution: hematoxylin intensity (1.0 = identity).
+    pub deconv_h_intensity: f32,
+    /// Color deconvolution: hematoxylin channel visible.
+    pub deconv_h_visible: bool,
+    /// Color deconvolution: eosin intensity (1.0 = identity).
+    pub deconv_e_intensity: f32,
+    /// Color deconvolution: eosin channel visible.
+    pub deconv_e_visible: bool,
+    /// Color deconvolution: isolated channel (0=none, 1=hematoxylin, 2=eosin).
+    pub deconv_isolated_channel: u8,
 }
 
 impl Default for ExportSettings {
@@ -47,6 +57,11 @@ impl Default for ExportSettings {
             brightness: 0.0,
             contrast: 1.0,
             background_rgba: [255, 255, 255, 255],
+            deconv_h_intensity: 1.0,
+            deconv_h_visible: true,
+            deconv_e_intensity: 1.0,
+            deconv_e_visible: true,
+            deconv_isolated_channel: 0,
         }
     }
 }
@@ -219,13 +234,36 @@ pub fn render_export(
 
     // ── Post-processing ──
     // Stain normalization
-    if settings.stain_normalization != StainNormalization::None {
+    let stain_params = if settings.stain_normalization != StainNormalization::None {
         let tile_slices: Vec<&[u8]> = fine_tiles
             .iter()
             .map(|(_, td)| td.data.as_slice())
             .collect();
         let params = stain::compute_cpu_stain_params(settings.stain_normalization, &tile_slices);
         stain::apply_stain_params_to_buffer(&mut buffer, &params);
+        Some(params)
+    } else {
+        None
+    };
+
+    // Color deconvolution
+    let deconv_is_default = settings.deconv_h_visible
+        && settings.deconv_e_visible
+        && (settings.deconv_h_intensity - 1.0).abs() < 0.001
+        && (settings.deconv_e_intensity - 1.0).abs() < 0.001
+        && settings.deconv_isolated_channel == 0;
+    if !deconv_is_default {
+        let deconv_params = stain::build_deconv_params(
+            settings.deconv_h_intensity,
+            settings.deconv_h_visible,
+            settings.deconv_e_intensity,
+            settings.deconv_e_visible,
+            settings.deconv_isolated_channel,
+            stain_params.as_ref(),
+        );
+        if deconv_params.enabled {
+            stain::apply_color_deconvolution(&mut buffer, &deconv_params);
+        }
     }
 
     // Sharpening

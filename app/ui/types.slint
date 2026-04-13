@@ -202,6 +202,12 @@ export struct ExportSettings {
     roi-outside-overlay: bool,
     roi-outside-color: color,
     roi-outside-opacity: float,
+    // Color Deconvolution
+    deconv-hematoxylin-intensity: float,
+    deconv-hematoxylin-visible: bool,
+    deconv-eosin-intensity: float,
+    deconv-eosin-visible: bool,
+    deconv-isolated-channel: IsolatedChannel,
     // Format
     format: ExportFormat,
     jpeg-quality: int,
