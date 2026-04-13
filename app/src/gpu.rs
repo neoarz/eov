@@ -537,15 +537,20 @@ impl TileArray {
             .filter(|(_, slot)| slot.last_used_frame != protect_frame)
             .map(|(coord, slot)| (*coord, slot.layer, slot.last_used_frame))
             .collect();
-        entries.sort_by_key(|(_, _, frame)| *frame);
-        for (coord, layer, _) in entries.into_iter().take(count) {
-            self.slots.remove(&coord);
-            self.free_list.push(layer);
+        if entries.len() <= count {
+            // Evict everything eligible.
+            for (coord, layer, _) in &entries {
+                self.slots.remove(coord);
+                self.free_list.push(*layer);
+            }
+        } else {
+            // Partial sort: partition so the k oldest are at [0..count] in O(n).
+            entries.select_nth_unstable_by_key(count - 1, |(_, _, frame)| *frame);
+            for (coord, layer, _) in entries[..count].iter() {
+                self.slots.remove(coord);
+                self.free_list.push(*layer);
+            }
         }
-    }
-
-    fn get_layer(&self, coord: &TileCoord) -> Option<u32> {
-        self.slots.get(coord).map(|s| s.layer)
     }
 
     fn tile_dimensions(&self, coord: &TileCoord) -> Option<(u32, u32)> {
