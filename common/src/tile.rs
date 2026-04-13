@@ -6,22 +6,27 @@
 use crate::{Error, Result, WsiFile};
 use tracing::trace;
 
+/// Describes the expanded read region and how much valid border was available.
+struct ReadRegion<'a> {
+    data: &'a [u8],
+    width: u32,
+    height: u32,
+    avail_left: u32,
+    avail_top: u32,
+}
+
 /// Build a uniformly-bordered RGBA buffer from an expanded-region read.
 ///
 /// The read data has variable border amounts on each side (limited by image
 /// bounds).  This function copies it into a buffer that always has exactly
 /// `border` pixels on every side, edge-clamping where the image boundary
 /// prevented reading real neighbor data.
-fn create_bordered_tile(
-    read_data: &[u8],
-    read_w: u32,
-    read_h: u32,
-    inner_w: u32,
-    inner_h: u32,
-    border: u32,
-    avail_left: u32,
-    avail_top: u32,
-) -> Vec<u8> {
+fn create_bordered_tile(read: ReadRegion, inner_w: u32, inner_h: u32, border: u32) -> Vec<u8> {
+    let read_data = read.data;
+    let read_w = read.width;
+    let read_h = read.height;
+    let avail_left = read.avail_left;
+    let avail_top = read.avail_top;
     let out_w = (inner_w + 2 * border) as usize;
     let out_h = (inner_h + 2 * border) as usize;
     let dst_stride = out_w * 4;
@@ -311,7 +316,16 @@ impl TileManager {
 
         // Build the uniformly-bordered output buffer.
         let data = create_bordered_tile(
-            &read_data, read_w, read_h, inner_w, inner_h, BORDER, avail_left, avail_top,
+            ReadRegion {
+                data: &read_data,
+                width: read_w,
+                height: read_h,
+                avail_left,
+                avail_top,
+            },
+            inner_w,
+            inner_h,
+            BORDER,
         );
 
         Ok(TileData::new(coord, data, inner_w, inner_h, BORDER))

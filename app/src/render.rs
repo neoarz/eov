@@ -204,7 +204,7 @@ pub fn calculate_trilinear_levels(wsi: &WsiFile, target_downsample: f64) -> Tril
 }
 
 type CoarseBlendData = (Arc<common::TileData>, [f32; 2], [f32; 2], f32);
-type CpuBlitFn = fn(&mut [u8], u32, u32, &[u8], u32, u32, u32, blitter::BlitRect);
+type CpuBlitFn = fn(&mut [u8], u32, u32, blitter::TileSrc, blitter::BlitRect);
 
 #[derive(Default)]
 struct PaneRenderOutcome {
@@ -837,10 +837,12 @@ fn render_pane_to_image(
                 buf,
                 render_width,
                 render_height,
-                &fallback_tile.data,
-                fallback_tile.width,
-                fallback_tile.height,
-                fallback_tile.border,
+                blitter::TileSrc {
+                    data: &fallback_tile.data,
+                    width: fallback_tile.width,
+                    height: fallback_tile.height,
+                    border: fallback_tile.border,
+                },
                 *rect,
             );
         }
@@ -863,10 +865,12 @@ fn render_pane_to_image(
                 buf,
                 render_width,
                 render_height,
-                &tile_data.data,
-                tile_data.width,
-                tile_data.height,
-                tile_data.border,
+                blitter::TileSrc {
+                    data: &tile_data.data,
+                    width: tile_data.width,
+                    height: tile_data.height,
+                    border: tile_data.border,
+                },
                 blitter::BlitRect {
                     x: screen_x,
                     y: screen_y,
@@ -910,10 +914,12 @@ fn render_pane_to_image(
                 &mut coarse_buffer,
                 render_width,
                 render_height,
-                &tile_data.data,
-                tile_data.width,
-                tile_data.height,
-                tile_data.border,
+                blitter::TileSrc {
+                    data: &tile_data.data,
+                    width: tile_data.width,
+                    height: tile_data.height,
+                    border: tile_data.border,
+                },
                 blitter::BlitRect {
                     x: screen_x,
                     y: screen_y,

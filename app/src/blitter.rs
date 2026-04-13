@@ -5,6 +5,14 @@
 
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 
+/// Borrowed reference to tile source data for blitting.
+pub struct TileSrc<'a> {
+    pub data: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+    pub border: u32,
+}
+
 #[derive(Clone, Copy)]
 pub struct BlitRect {
     pub x: i32,
@@ -68,12 +76,13 @@ pub fn blit_tile(
     dest: &mut [u8],
     dest_width: u32,
     dest_height: u32,
-    src: &[u8],
-    src_width: u32,
-    src_height: u32,
-    border: u32,
+    tile: TileSrc,
     rect: BlitRect,
 ) {
+    let src = tile.data;
+    let src_width = tile.width;
+    let src_height = tile.height;
+    let border = tile.border;
     let BlitRect {
         x: dest_x,
         y: dest_y,
@@ -254,12 +263,13 @@ pub fn blit_tile_lanczos3(
     dest: &mut [u8],
     dest_width: u32,
     dest_height: u32,
-    src: &[u8],
-    src_width: u32,
-    src_height: u32,
-    border: u32,
+    tile: TileSrc,
     rect: BlitRect,
 ) {
+    let src = tile.data;
+    let src_width = tile.width;
+    let src_height = tile.height;
+    let border = tile.border;
     let BlitRect {
         x: dest_x,
         y: dest_y,
