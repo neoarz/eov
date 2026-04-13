@@ -7,9 +7,9 @@ use crate::state::{AppState, HudSettings, PaneId};
 use crate::tools::{pane_overlay_data, pane_viewport_state};
 use crate::{
     ContextMenuItem, FilteringMode as SlintFilteringMode, HudSettings as SlintHudSettings,
-    MeasurementUnit as SlintMeasurementUnit, MetadataItem, MinimapRect, PaneRenderCacheEntry,
-    PaneUiModels, PaneViewData, RecentFileData, RenderMode,
-    StainNormalization as SlintStainNormalization, TabData, ViewportInfo,
+    IsolatedChannel as SlintIsolatedChannel, MeasurementUnit as SlintMeasurementUnit,
+    MetadataItem, MinimapRect, PaneRenderCacheEntry, PaneUiModels, PaneViewData, RecentFileData,
+    RenderMode, StainNormalization as SlintStainNormalization, TabData, ViewportInfo,
 };
 use common::viewport::{MAX_ZOOM, MIN_ZOOM};
 use common::{
@@ -431,6 +431,19 @@ fn ui_hud_settings(hud: &HudSettings, mpp_x: f32, mpp_y: f32) -> SlintHudSetting
         stain_normalization: ui_stain_normalization(hud.stain_normalization),
         mpp_x,
         mpp_y,
+        deconv_hematoxylin_intensity: hud.deconv_hematoxylin_intensity,
+        deconv_hematoxylin_visible: hud.deconv_hematoxylin_visible,
+        deconv_eosin_intensity: hud.deconv_eosin_intensity,
+        deconv_eosin_visible: hud.deconv_eosin_visible,
+        deconv_isolated_channel: ui_isolated_channel(hud.deconv_isolated_channel),
+    }
+}
+
+fn ui_isolated_channel(ic: crate::state::IsolatedChannel) -> SlintIsolatedChannel {
+    match ic {
+        crate::state::IsolatedChannel::None => SlintIsolatedChannel::None,
+        crate::state::IsolatedChannel::Hematoxylin => SlintIsolatedChannel::Hematoxylin,
+        crate::state::IsolatedChannel::Eosin => SlintIsolatedChannel::Eosin,
     }
 }
 

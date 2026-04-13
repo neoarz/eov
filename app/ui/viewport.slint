@@ -61,6 +61,12 @@ export component Viewport inherits Rectangle {
     callback hud-stain-normalization-changed(StainNormalization);
     callback hud-reset-adjustments();
     callback hud-zoom-input(float);
+    callback hud-deconv-h-intensity-changed(float);
+    callback hud-deconv-e-intensity-changed(float);
+    callback hud-deconv-h-visibility-toggled();
+    callback hud-deconv-e-visibility-toggled();
+    callback hud-deconv-h-view-toggled();
+    callback hud-deconv-e-view-toggled();
 
     out property <length> viewport-width: self.width;
     out property <length> viewport-height: self.height;
@@ -503,6 +509,29 @@ export component Viewport inherits Rectangle {
         }
         reset-adjustments => {
             root.hud-reset-adjustments();
+        }
+        deconv-hematoxylin-intensity: root.hud.deconv-hematoxylin-intensity;
+        deconv-hematoxylin-visible: root.hud.deconv-hematoxylin-visible;
+        deconv-eosin-intensity: root.hud.deconv-eosin-intensity;
+        deconv-eosin-visible: root.hud.deconv-eosin-visible;
+        deconv-isolated-channel: root.hud.deconv-isolated-channel;
+        deconv-h-intensity-changed(v) => {
+            root.hud-deconv-h-intensity-changed(v);
+        }
+        deconv-e-intensity-changed(v) => {
+            root.hud-deconv-e-intensity-changed(v);
+        }
+        deconv-h-visibility-toggled => {
+            root.hud-deconv-h-visibility-toggled();
+        }
+        deconv-e-visibility-toggled => {
+            root.hud-deconv-e-visibility-toggled();
+        }
+        deconv-h-view-toggled => {
+            root.hud-deconv-h-view-toggled();
+        }
+        deconv-e-view-toggled => {
+            root.hud-deconv-e-view-toggled();
         }
     }
 

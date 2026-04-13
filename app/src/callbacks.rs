@@ -2202,6 +2202,142 @@ pub fn setup_callbacks(
         });
     }
 
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_deconv_h_intensity_changed(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.deconv_hematoxylin_intensity = value;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_deconv_e_intensity_changed(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.deconv_eosin_intensity = value;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_deconv_h_visibility_toggled(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.deconv_hematoxylin_visible = !hud.deconv_hematoxylin_visible;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_deconv_e_visibility_toggled(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.deconv_eosin_visible = !hud.deconv_eosin_visible;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_deconv_h_view_toggled(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    use crate::state::IsolatedChannel;
+                    hud.deconv_isolated_channel = if hud.deconv_isolated_channel == IsolatedChannel::Hematoxylin {
+                        IsolatedChannel::None
+                    } else {
+                        IsolatedChannel::Hematoxylin
+                    };
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_deconv_e_view_toggled(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    use crate::state::IsolatedChannel;
+                    hud.deconv_isolated_channel = if hud.deconv_isolated_channel == IsolatedChannel::Eosin {
+                        IsolatedChannel::None
+                    } else {
+                        IsolatedChannel::Eosin
+                    };
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
     // -- Export dialog callbacks --
     let export_debounce_timer = Rc::new(Timer::default());
     {

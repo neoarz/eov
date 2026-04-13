@@ -1,3 +1,6 @@
-//! Stain normalization - re-exports from common crate.
+//! Stain normalization and color deconvolution - re-exports from common crate.
 
-pub use common::stain::{StainNormParams, apply_stain_params_to_buffer, compute_cpu_stain_params};
+pub use common::stain::{
+    ColorDeconvParams, StainNormParams, apply_color_deconvolution, apply_stain_params_to_buffer,
+    build_deconv_params, compute_cpu_stain_params,
+};

@@ -64,6 +64,12 @@ component PaneView inherits Rectangle {
     callback hud-stain-normalization-changed(int, StainNormalization);
     callback hud-reset-adjustments(int);
     callback hud-zoom-input(int, float);
+    callback hud-deconv-h-intensity-changed(int, float);
+    callback hud-deconv-e-intensity-changed(int, float);
+    callback hud-deconv-h-visibility-toggled(int);
+    callback hud-deconv-e-visibility-toggled(int);
+    callback hud-deconv-h-view-toggled(int);
+    callback hud-deconv-e-view-toggled(int);
 
     border-width: 0px;
     border-color: transparent;
@@ -229,6 +235,30 @@ component PaneView inherits Rectangle {
                 hud-zoom-input(v) => {
                     root.pane-focused(root.pane-data.id);
                     root.hud-zoom-input(root.pane-data.id, v);
+                }
+                hud-deconv-h-intensity-changed(v) => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-deconv-h-intensity-changed(root.pane-data.id, v);
+                }
+                hud-deconv-e-intensity-changed(v) => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-deconv-e-intensity-changed(root.pane-data.id, v);
+                }
+                hud-deconv-h-visibility-toggled => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-deconv-h-visibility-toggled(root.pane-data.id);
+                }
+                hud-deconv-e-visibility-toggled => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-deconv-e-visibility-toggled(root.pane-data.id);
+                }
+                hud-deconv-h-view-toggled => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-deconv-h-view-toggled(root.pane-data.id);
+                }
+                hud-deconv-e-view-toggled => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-deconv-e-view-toggled(root.pane-data.id);
                 }
             }
         }
@@ -399,6 +429,12 @@ export component SplitPaneContainer inherits Rectangle {
     callback hud-stain-normalization-changed(int, StainNormalization);
     callback hud-reset-adjustments(int);
     callback hud-zoom-input(int, float);
+    callback hud-deconv-h-intensity-changed(int, float);
+    callback hud-deconv-e-intensity-changed(int, float);
+    callback hud-deconv-h-visibility-toggled(int);
+    callback hud-deconv-e-visibility-toggled(int);
+    callback hud-deconv-h-view-toggled(int);
+    callback hud-deconv-e-view-toggled(int);
 
     background: Theme.background;
 
@@ -530,6 +566,24 @@ export component SplitPaneContainer inherits Rectangle {
             }
             hud-zoom-input(pane-id, v) => {
                 root.hud-zoom-input(pane-id, v);
+            }
+            hud-deconv-h-intensity-changed(pane-id, v) => {
+                root.hud-deconv-h-intensity-changed(pane-id, v);
+            }
+            hud-deconv-e-intensity-changed(pane-id, v) => {
+                root.hud-deconv-e-intensity-changed(pane-id, v);
+            }
+            hud-deconv-h-visibility-toggled(pane-id) => {
+                root.hud-deconv-h-visibility-toggled(pane-id);
+            }
+            hud-deconv-e-visibility-toggled(pane-id) => {
+                root.hud-deconv-e-visibility-toggled(pane-id);
+            }
+            hud-deconv-h-view-toggled(pane-id) => {
+                root.hud-deconv-h-view-toggled(pane-id);
+            }
+            hud-deconv-e-view-toggled(pane-id) => {
+                root.hud-deconv-e-view-toggled(pane-id);
             }
         }
     }

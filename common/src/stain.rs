@@ -595,6 +595,197 @@ fn top_two_eigenvectors(cov: &[[f32; 3]; 3]) -> ([f32; 3], [f32; 3]) {
     (v1, v2)
 }
 
+// ─── Color deconvolution ─────────────────────────────────────────────────────
+//
+// Color deconvolution separates H&E stain channels from RGB tile data.
+// It uses the optical density model:
+//   1. Convert RGB to OD:  OD = -ln(RGB / 255)
+//   2. Solve for stain concentrations:  C = inv(stain_matrix) * OD
+//   3. Reconstruct output based on which channels are visible/isolated.
+//
+// The default stain matrix (Ruifrok & Johnston, 2001) is used when no
+// slide-specific stain matrix is available from normalization fitting.
+
+/// Default H&E stain matrix for deconvolution (same as TARGET_STAIN_MATRIX).
+/// Row 0 = Hematoxylin OD vector, Row 1 = Eosin OD vector.
+pub const DEFAULT_DECONV_MATRIX: [[f32; 3]; 2] = TARGET_STAIN_MATRIX;
+
+/// Pre-computed pseudo-inverse of the default deconvolution matrix.
+/// Used for concentration estimation: C = inv_matrix * OD.
+fn default_deconv_inverse() -> [[f32; 3]; 2] {
+    let col_major = stain_mat_to_col_major(&DEFAULT_DECONV_MATRIX);
+    pseudo_inverse_2x3(&col_major)
+}
+
+/// Parameters controlling color deconvolution rendering.
+/// Packed for efficient GPU uniform upload.
+#[derive(Debug, Clone, Copy)]
+pub struct ColorDeconvParams {
+    /// Inverse stain matrix row 0 (Hematoxylin): [inv[0][0], inv[0][1], inv[0][2], h_intensity]
+    pub inv_row0: [f32; 4],
+    /// Inverse stain matrix row 1 (Eosin): [inv[1][0], inv[1][1], inv[1][2], e_intensity]
+    pub inv_row1: [f32; 4],
+    /// Stain matrix row 0 (Hematoxylin OD vector)
+    pub stain_h: [f32; 4],
+    /// Stain matrix row 1 (Eosin OD vector)
+    pub stain_e: [f32; 4],
+    /// Channel visibility: 0.0 = hidden, 1.0 = visible  (packed as [h_vis, e_vis, 0, 0])
+    pub visibility: [f32; 4],
+    /// Isolated channel mode: 0.0 = blended, 1.0 = hematoxylin isolated, 2.0 = eosin isolated
+    pub isolated_mode: f32,
+    /// Feature enabled flag (any deconv parameter differs from defaults)
+    pub enabled: bool,
+}
+
+impl Default for ColorDeconvParams {
+    fn default() -> Self {
+        Self {
+            inv_row0: [0.0; 4],
+            inv_row1: [0.0; 4],
+            stain_h: [0.0; 4],
+            stain_e: [0.0; 4],
+            visibility: [1.0, 1.0, 0.0, 0.0],
+            isolated_mode: 0.0,
+            enabled: false,
+        }
+    }
+}
+
+/// Build color deconvolution parameters from UI state and an optional
+/// slide-specific stain matrix (from normalization fitting).
+///
+/// If `stain_norm_params` is Some and enabled, its inverse stain matrix is
+/// reused for deconvolution so the channel separation matches what
+/// normalization computed. Otherwise the default Ruifrok & Johnston matrix
+/// is used.
+pub fn build_deconv_params(
+    h_intensity: f32,
+    h_visible: bool,
+    e_intensity: f32,
+    e_visible: bool,
+    isolated_channel: u8, // 0=none, 1=hematoxylin, 2=eosin
+    stain_norm_params: Option<&StainNormParams>,
+) -> ColorDeconvParams {
+    // Determine if deconvolution is effectively active
+    let is_default = h_visible
+        && e_visible
+        && (h_intensity - 1.0).abs() < 0.001
+        && (e_intensity - 1.0).abs() < 0.001
+        && isolated_channel == 0;
+
+    if is_default {
+        return ColorDeconvParams::default();
+    }
+
+    // Use slide-specific inverse matrix if available from stain normalization,
+    // otherwise fall back to the default Ruifrok & Johnston matrix.
+    let (inv, stain_mat) = if let Some(params) = stain_norm_params
+        && params.enabled
+    {
+        // The normalization params already contain the inverse stain matrix;
+        // reconstruct the forward matrix from the default target for OD reconstruction.
+        let inv = [
+            [params.inv_stain_r0[0], params.inv_stain_r0[1], params.inv_stain_r0[2]],
+            [params.inv_stain_r1[0], params.inv_stain_r1[1], params.inv_stain_r1[2]],
+        ];
+        (inv, DEFAULT_DECONV_MATRIX)
+    } else {
+        (default_deconv_inverse(), DEFAULT_DECONV_MATRIX)
+    };
+
+    ColorDeconvParams {
+        inv_row0: [inv[0][0], inv[0][1], inv[0][2], h_intensity],
+        inv_row1: [inv[1][0], inv[1][1], inv[1][2], e_intensity],
+        stain_h: [stain_mat[0][0], stain_mat[0][1], stain_mat[0][2], 0.0],
+        stain_e: [stain_mat[1][0], stain_mat[1][1], stain_mat[1][2], 0.0],
+        visibility: [
+            if h_visible { 1.0 } else { 0.0 },
+            if e_visible { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        ],
+        isolated_mode: isolated_channel as f32,
+        enabled: true,
+    }
+}
+
+/// Apply color deconvolution to an RGBA buffer on the CPU.
+///
+/// This performs the same per-pixel logic as the GPU shader:
+///   - RGB → optical density
+///   - OD → stain concentrations via inverse matrix
+///   - Reconstruct output based on visibility, intensity, and isolation mode
+pub fn apply_color_deconvolution(buffer: &mut [u8], params: &ColorDeconvParams) {
+    if !params.enabled {
+        return;
+    }
+
+    let inv = [
+        [params.inv_row0[0], params.inv_row0[1], params.inv_row0[2]],
+        [params.inv_row1[0], params.inv_row1[1], params.inv_row1[2]],
+    ];
+    let h_intensity = params.inv_row0[3];
+    let e_intensity = params.inv_row1[3];
+    let h_visible = params.visibility[0] > 0.5;
+    let e_visible = params.visibility[1] > 0.5;
+    let isolated = params.isolated_mode;
+
+    let stain_h = [params.stain_h[0], params.stain_h[1], params.stain_h[2]];
+    let stain_e = [params.stain_e[0], params.stain_e[1], params.stain_e[2]];
+
+    for chunk in buffer.chunks_exact_mut(4) {
+        let od = rgb_to_od(chunk[0], chunk[1], chunk[2]);
+        if !is_tissue(&od) {
+            // Background pixels pass through unchanged.
+            continue;
+        }
+
+        // Solve concentrations: C = inv(stain_matrix) * OD, clamped >= 0
+        let c_h = (inv[0][0] * od[0] + inv[0][1] * od[1] + inv[0][2] * od[2]).max(0.0);
+        let c_e = (inv[1][0] * od[0] + inv[1][1] * od[1] + inv[1][2] * od[2]).max(0.0);
+
+        let (r, g, b) = if isolated > 0.5 {
+            // Isolated grayscale view: show one channel as grayscale.
+            // Map concentration to grayscale: higher concentration → darker.
+            let c = if isolated < 1.5 {
+                // Hematoxylin isolated
+                if h_visible { c_h * h_intensity } else { 0.0 }
+            } else {
+                // Eosin isolated
+                if e_visible { c_e * e_intensity } else { 0.0 }
+            };
+            // Grayscale via OD: use concentration as scalar OD, then exp(-OD)
+            let gray = (-c).exp().clamp(0.0, 1.0);
+            (gray, gray, gray)
+        } else {
+            // Blended mode: reconstruct from visible channels with intensity scaling.
+            let mut new_od = [0.0f32; 3];
+            if h_visible && h_intensity > 0.0 {
+                let scaled_h = c_h * h_intensity;
+                new_od[0] += stain_h[0] * scaled_h;
+                new_od[1] += stain_h[1] * scaled_h;
+                new_od[2] += stain_h[2] * scaled_h;
+            }
+            if e_visible && e_intensity > 0.0 {
+                let scaled_e = c_e * e_intensity;
+                new_od[0] += stain_e[0] * scaled_e;
+                new_od[1] += stain_e[1] * scaled_e;
+                new_od[2] += stain_e[2] * scaled_e;
+            }
+            // If both channels hidden, output white (zero OD = full transmission)
+            (
+                (-new_od[0]).exp().clamp(0.0, 1.0),
+                (-new_od[1]).exp().clamp(0.0, 1.0),
+                (-new_od[2]).exp().clamp(0.0, 1.0),
+            )
+        };
+
+        chunk[0] = (r * 255.0) as u8;
+        chunk[1] = (g * 255.0) as u8;
+        chunk[2] = (b * 255.0) as u8;
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

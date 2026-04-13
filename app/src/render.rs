@@ -85,6 +85,11 @@ struct CpuPaneSnapshot {
     hud_brightness: f32,
     hud_contrast: f32,
     hud_stain_normalization: StainNormalization,
+    hud_deconv_h_intensity: f32,
+    hud_deconv_h_visible: bool,
+    hud_deconv_e_intensity: f32,
+    hud_deconv_e_visible: bool,
+    hud_deconv_isolated: crate::state::IsolatedChannel,
     last_render_sharpness: f32,
     last_render_gamma: f32,
     last_render_brightness: f32,
@@ -158,6 +163,11 @@ struct RenderAdjustments {
     brightness: f32,
     contrast: f32,
     stain_normalization: StainNormalization,
+    deconv_h_intensity: f32,
+    deconv_h_visible: bool,
+    deconv_e_intensity: f32,
+    deconv_e_visible: bool,
+    deconv_isolated: crate::state::IsolatedChannel,
 }
 
 impl RenderAdjustments {
@@ -167,6 +177,11 @@ impl RenderAdjustments {
             || (self.brightness - previous.brightness).abs() > 0.001
             || (self.contrast - previous.contrast).abs() > 0.001
             || self.stain_normalization != previous.stain_normalization
+            || (self.deconv_h_intensity - previous.deconv_h_intensity).abs() > 0.001
+            || self.deconv_h_visible != previous.deconv_h_visible
+            || (self.deconv_e_intensity - previous.deconv_e_intensity).abs() > 0.001
+            || self.deconv_e_visible != previous.deconv_e_visible
+            || self.deconv_isolated != previous.deconv_isolated
     }
 }
 
@@ -706,6 +721,11 @@ fn collect_cpu_frame_snapshot(
             hud_brightness,
             hud_contrast,
             hud_stain_normalization,
+            hud_deconv_h_intensity,
+            hud_deconv_h_visible,
+            hud_deconv_e_intensity,
+            hud_deconv_e_visible,
+            hud_deconv_isolated,
             last_render_sharpness,
             last_render_gamma,
             last_render_brightness,
@@ -739,6 +759,11 @@ fn collect_cpu_frame_snapshot(
                     pane_state.hud.brightness,
                     pane_state.hud.contrast,
                     pane_state.hud.stain_normalization,
+                    pane_state.hud.deconv_hematoxylin_intensity,
+                    pane_state.hud.deconv_hematoxylin_visible,
+                    pane_state.hud.deconv_eosin_intensity,
+                    pane_state.hud.deconv_eosin_visible,
+                    pane_state.hud.deconv_isolated_channel,
                     pane_state.last_render_sharpness,
                     pane_state.last_render_gamma,
                     pane_state.last_render_brightness,
@@ -797,6 +822,11 @@ fn collect_cpu_frame_snapshot(
             hud_brightness,
             hud_contrast,
             hud_stain_normalization,
+            hud_deconv_h_intensity,
+            hud_deconv_h_visible,
+            hud_deconv_e_intensity,
+            hud_deconv_e_visible,
+            hud_deconv_isolated,
             last_render_sharpness,
             last_render_gamma,
             last_render_brightness,
@@ -994,6 +1024,11 @@ fn render_cpu_pane_from_snapshot(
         brightness: snapshot.hud_brightness,
         contrast: snapshot.hud_contrast,
         stain_normalization: snapshot.hud_stain_normalization,
+        deconv_h_intensity: snapshot.hud_deconv_h_intensity,
+        deconv_h_visible: snapshot.hud_deconv_h_visible,
+        deconv_e_intensity: snapshot.hud_deconv_e_intensity,
+        deconv_e_visible: snapshot.hud_deconv_e_visible,
+        deconv_isolated: snapshot.hud_deconv_isolated,
     }
     .changed_from(RenderAdjustments {
         sharpness: snapshot.last_render_sharpness,
@@ -1001,6 +1036,11 @@ fn render_cpu_pane_from_snapshot(
         brightness: snapshot.last_render_brightness,
         contrast: snapshot.last_render_contrast,
         stain_normalization: snapshot.last_render_stain_normalization,
+        deconv_h_intensity: 1.0,
+        deconv_h_visible: true,
+        deconv_e_intensity: 1.0,
+        deconv_e_visible: true,
+        deconv_isolated: crate::state::IsolatedChannel::None,
     });
 
     let mut commit = CpuRenderCommit {
@@ -1278,6 +1318,31 @@ fn render_cpu_pane_from_snapshot(
     if pending_cpu_job_id.is_none()
         && let Some(pool) = crate::render_pool::global()
     {
+        // Build color deconvolution params from HUD state.
+        let deconv_params = if !is_moving && snapshot.hud_deconv_isolated != crate::state::IsolatedChannel::None
+            || !snapshot.hud_deconv_h_visible
+            || !snapshot.hud_deconv_e_visible
+            || (snapshot.hud_deconv_h_intensity - 1.0).abs() > 0.001
+            || (snapshot.hud_deconv_e_intensity - 1.0).abs() > 0.001
+        {
+            let isolated = match snapshot.hud_deconv_isolated {
+                crate::state::IsolatedChannel::None => 0u8,
+                crate::state::IsolatedChannel::Hematoxylin => 1u8,
+                crate::state::IsolatedChannel::Eosin => 2u8,
+            };
+            let params = crate::stain::build_deconv_params(
+                snapshot.hud_deconv_h_intensity,
+                snapshot.hud_deconv_h_visible,
+                snapshot.hud_deconv_e_intensity,
+                snapshot.hud_deconv_e_visible,
+                isolated,
+                stain_params.as_ref(),
+            );
+            if params.enabled { Some(params) } else { None }
+        } else {
+            None
+        };
+
         let job_id = pool.next_job_id();
         pool.submit(CpuRenderJob {
             pane_index: snapshot.pane.0,
@@ -1291,6 +1356,7 @@ fn render_cpu_pane_from_snapshot(
             fine_blits: fine_commands,
             postprocess: CpuRenderPostProcess {
                 stain_params: if is_moving { None } else { stain_params },
+                deconv_params: if is_moving { None } else { deconv_params },
                 sharpness: if is_moving {
                     0.0
                 } else {
@@ -1364,11 +1430,21 @@ fn render_pane_to_image(
         hud_brightness,
         hud_contrast,
         hud_stain_normalization,
+        hud_deconv_h_intensity,
+        hud_deconv_h_visible,
+        hud_deconv_e_intensity,
+        hud_deconv_e_visible,
+        hud_deconv_isolated,
         last_render_sharpness,
         last_render_gamma,
         last_render_brightness,
         last_render_contrast,
         last_render_stain_normalization,
+        last_render_deconv_h_intensity,
+        last_render_deconv_h_visible,
+        last_render_deconv_e_intensity,
+        last_render_deconv_e_visible,
+        last_render_deconv_isolated,
         pending_cpu_job_id,
         needs_settled_cpu_render,
     ) = {
@@ -1395,11 +1471,21 @@ fn render_pane_to_image(
             pane_state.hud.brightness,
             pane_state.hud.contrast,
             pane_state.hud.stain_normalization,
+            pane_state.hud.deconv_hematoxylin_intensity,
+            pane_state.hud.deconv_hematoxylin_visible,
+            pane_state.hud.deconv_eosin_intensity,
+            pane_state.hud.deconv_eosin_visible,
+            pane_state.hud.deconv_isolated_channel,
             pane_state.last_render_sharpness,
             pane_state.last_render_gamma,
             pane_state.last_render_brightness,
             pane_state.last_render_contrast,
             pane_state.last_render_stain_normalization,
+            pane_state.last_render_deconv_h_intensity,
+            pane_state.last_render_deconv_h_visible,
+            pane_state.last_render_deconv_e_intensity,
+            pane_state.last_render_deconv_e_visible,
+            pane_state.last_render_deconv_isolated,
             pane_state.pending_cpu_job_id,
             pane_state.needs_settled_cpu_render,
         )
@@ -1482,6 +1568,11 @@ fn render_pane_to_image(
         brightness: hud_brightness,
         contrast: hud_contrast,
         stain_normalization: hud_stain_normalization,
+        deconv_h_intensity: hud_deconv_h_intensity,
+        deconv_h_visible: hud_deconv_h_visible,
+        deconv_e_intensity: hud_deconv_e_intensity,
+        deconv_e_visible: hud_deconv_e_visible,
+        deconv_isolated: hud_deconv_isolated,
     }
     .changed_from(RenderAdjustments {
         sharpness: last_render_sharpness,
@@ -1489,6 +1580,11 @@ fn render_pane_to_image(
         brightness: last_render_brightness,
         contrast: last_render_contrast,
         stain_normalization: last_render_stain_normalization,
+        deconv_h_intensity: last_render_deconv_h_intensity,
+        deconv_h_visible: last_render_deconv_h_visible,
+        deconv_e_intensity: last_render_deconv_e_intensity,
+        deconv_e_visible: last_render_deconv_e_visible,
+        deconv_isolated: last_render_deconv_isolated,
     });
 
     if !force_render
@@ -1522,6 +1618,11 @@ fn render_pane_to_image(
         pane_state.last_render_contrast = hud_contrast;
         pane_state.last_render_sharpness = hud_sharpness;
         pane_state.last_render_stain_normalization = hud_stain_normalization;
+        pane_state.last_render_deconv_h_intensity = hud_deconv_h_intensity;
+        pane_state.last_render_deconv_h_visible = hud_deconv_h_visible;
+        pane_state.last_render_deconv_e_intensity = hud_deconv_e_intensity;
+        pane_state.last_render_deconv_e_visible = hud_deconv_e_visible;
+        pane_state.last_render_deconv_isolated = hud_deconv_isolated;
     }
 
     let render_width = vp_width as u32;
@@ -1577,6 +1678,30 @@ fn render_pane_to_image(
             pane_state.stain_params_method = method;
         }
         let stain_params = stain_params.unwrap_or_default();
+        let deconv_params = {
+            let deconv_active = hud_deconv_isolated != crate::state::IsolatedChannel::None
+                || hud_deconv_h_intensity != 1.0
+                || hud_deconv_e_intensity != 1.0
+                || !hud_deconv_h_visible
+                || !hud_deconv_e_visible;
+            if deconv_active {
+                let isolated_mode = match hud_deconv_isolated {
+                    crate::state::IsolatedChannel::None => 0,
+                    crate::state::IsolatedChannel::Hematoxylin => 1,
+                    crate::state::IsolatedChannel::Eosin => 2,
+                };
+                crate::stain::build_deconv_params(
+                    hud_deconv_h_intensity,
+                    hud_deconv_h_visible,
+                    hud_deconv_e_intensity,
+                    hud_deconv_e_visible,
+                    isolated_mode,
+                    if stain_params.enabled { Some(&stain_params) } else { None },
+                )
+            } else {
+                crate::stain::ColorDeconvParams::default()
+            }
+        };
         let slot = match pane {
             PaneId::PRIMARY => SurfaceSlot::PRIMARY,
             PaneId::SECONDARY => SurfaceSlot::SECONDARY,
@@ -1596,6 +1721,7 @@ fn render_pane_to_image(
                     stain_norm_enabled: stain_params.enabled,
                     inv_stain_r0: stain_params.inv_stain_r0,
                     inv_stain_r1: stain_params.inv_stain_r1,
+                    deconv_params,
                 },
             )
         })
@@ -1847,6 +1973,31 @@ fn render_pane_to_image(
             return PaneRenderOutcome::default();
         };
 
+        // Build color deconvolution params for the CPU fallback path.
+        let deconv_params = if !is_moving && (hud_deconv_isolated != crate::state::IsolatedChannel::None
+            || !hud_deconv_h_visible
+            || !hud_deconv_e_visible
+            || (hud_deconv_h_intensity - 1.0).abs() > 0.001
+            || (hud_deconv_e_intensity - 1.0).abs() > 0.001)
+        {
+            let isolated = match hud_deconv_isolated {
+                crate::state::IsolatedChannel::None => 0u8,
+                crate::state::IsolatedChannel::Hematoxylin => 1u8,
+                crate::state::IsolatedChannel::Eosin => 2u8,
+            };
+            let params = crate::stain::build_deconv_params(
+                hud_deconv_h_intensity,
+                hud_deconv_h_visible,
+                hud_deconv_e_intensity,
+                hud_deconv_e_visible,
+                isolated,
+                stain_params.as_ref(),
+            );
+            if params.enabled { Some(params) } else { None }
+        } else {
+            None
+        };
+
         let job_id = pool.next_job_id();
         pool.submit(CpuRenderJob {
             pane_index: pane.0,
@@ -1860,6 +2011,7 @@ fn render_pane_to_image(
             fine_blits: fine_commands,
             postprocess: CpuRenderPostProcess {
                 stain_params: if is_moving { None } else { stain_params },
+                deconv_params: if is_moving { None } else { deconv_params },
                 sharpness: if is_moving { 0.0 } else { hud_sharpness },
                 gamma: hud_gamma,
                 brightness: hud_brightness,

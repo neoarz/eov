@@ -22,6 +22,7 @@ pub struct CachedCpuFrame {
 #[derive(Clone)]
 pub struct CpuRenderPostProcess {
     pub stain_params: Option<crate::stain::StainNormParams>,
+    pub deconv_params: Option<crate::stain::ColorDeconvParams>,
     pub sharpness: f32,
     pub gamma: f32,
     pub brightness: f32,
@@ -233,6 +234,15 @@ fn render_job_into_buffer(
 
     if let Some(ref params) = job.postprocess.stain_params {
         stain::apply_stain_params_to_buffer(buffer, params);
+        if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+            return false;
+        }
+    }
+
+    // Color deconvolution: separate H&E channels and reconstruct based on
+    // visibility, intensity, and isolation settings.
+    if let Some(ref params) = job.postprocess.deconv_params {
+        stain::apply_color_deconvolution(buffer, params);
         if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
             return false;
         }

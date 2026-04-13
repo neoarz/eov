@@ -43,6 +43,14 @@ struct Adjustments {
     inv_stain_row0: vec4<f32>,
     inv_stain_row1: vec4<f32>,
     sharpness: f32,
+    deconv_enabled: f32,
+    deconv_isolated: f32,
+    _pad0: f32,
+    deconv_inv_row0: vec4<f32>,
+    deconv_inv_row1: vec4<f32>,
+    deconv_stain_h: vec4<f32>,
+    deconv_stain_e: vec4<f32>,
+    deconv_visibility: vec4<f32>,
 };
 
 @vertex
@@ -87,6 +95,46 @@ fn apply_stain_norm(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(new_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
+fn apply_deconv(color: vec4<f32>) -> vec4<f32> {
+    if adjustments.deconv_enabled < 0.5 {
+        return color;
+    }
+    let rgb = max(color.rgb, vec3<f32>(1.0 / 255.0));
+    let od = -log(rgb);
+    let od_sum = od.r + od.g + od.b;
+    if od_sum <= 0.15 || od_sum >= 6.0 {
+        return color;
+    }
+    let c_h = max(dot(adjustments.deconv_inv_row0.xyz, od), 0.0);
+    let c_e = max(dot(adjustments.deconv_inv_row1.xyz, od), 0.0);
+    let iso = i32(adjustments.deconv_isolated + 0.5);
+    if iso == 1 {
+        // Isolated hematoxylin grayscale
+        let v = exp(-c_h);
+        return vec4<f32>(v, v, v, color.a);
+    }
+    if iso == 2 {
+        // Isolated eosin grayscale
+        let v = exp(-c_e);
+        return vec4<f32>(v, v, v, color.a);
+    }
+    // Blended mode
+    let vis_h = adjustments.deconv_visibility.x;
+    let vis_e = adjustments.deconv_visibility.y;
+    if vis_h < 0.5 && vis_e < 0.5 {
+        return vec4<f32>(1.0, 1.0, 1.0, color.a);
+    }
+    var new_od = vec3<f32>(0.0);
+    if vis_h >= 0.5 {
+        new_od += adjustments.deconv_stain_h.xyz * c_h * adjustments.deconv_stain_h.w;
+    }
+    if vis_e >= 0.5 {
+        new_od += adjustments.deconv_stain_e.xyz * c_e * adjustments.deconv_stain_e.w;
+    }
+    let new_rgb = exp(-new_od);
+    return vec4<f32>(clamp(new_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
+}
+
 fn apply_adj(color: vec4<f32>) -> vec4<f32> {
     let g = vec3<f32>(
         pow(color.r, adjustments.inv_gamma),
@@ -123,7 +171,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fine = textureSample(tile_array, tile_sampler, input.fine_uv, input.fine_layer);
     let coarse = textureSample(tile_array, tile_sampler, input.coarse_uv, input.coarse_layer);
     let blended = mix(fine, coarse, input.mip_blend);
-    return apply_adj(apply_stain_norm(apply_sharpen(input.fine_uv, input.fine_layer, blended)));
+    return apply_adj(apply_deconv(apply_stain_norm(apply_sharpen(input.fine_uv, input.fine_layer, blended))));
 }
 "#;
 
@@ -157,6 +205,14 @@ struct Adjustments {
     inv_stain_row0: vec4<f32>,
     inv_stain_row1: vec4<f32>,
     sharpness: f32,
+    deconv_enabled: f32,
+    deconv_isolated: f32,
+    _pad0: f32,
+    deconv_inv_row0: vec4<f32>,
+    deconv_inv_row1: vec4<f32>,
+    deconv_stain_h: vec4<f32>,
+    deconv_stain_e: vec4<f32>,
+    deconv_visibility: vec4<f32>,
 };
 
 @vertex
@@ -220,6 +276,43 @@ fn apply_stain_norm(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(new_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
+fn apply_deconv(color: vec4<f32>) -> vec4<f32> {
+    if adjustments.deconv_enabled < 0.5 {
+        return color;
+    }
+    let rgb = max(color.rgb, vec3<f32>(1.0 / 255.0));
+    let od = -log(rgb);
+    let od_sum = od.r + od.g + od.b;
+    if od_sum <= 0.15 || od_sum >= 6.0 {
+        return color;
+    }
+    let c_h = max(dot(adjustments.deconv_inv_row0.xyz, od), 0.0);
+    let c_e = max(dot(adjustments.deconv_inv_row1.xyz, od), 0.0);
+    let iso = i32(adjustments.deconv_isolated + 0.5);
+    if iso == 1 {
+        let v = exp(-c_h);
+        return vec4<f32>(v, v, v, color.a);
+    }
+    if iso == 2 {
+        let v = exp(-c_e);
+        return vec4<f32>(v, v, v, color.a);
+    }
+    let vis_h = adjustments.deconv_visibility.x;
+    let vis_e = adjustments.deconv_visibility.y;
+    if vis_h < 0.5 && vis_e < 0.5 {
+        return vec4<f32>(1.0, 1.0, 1.0, color.a);
+    }
+    var new_od = vec3<f32>(0.0);
+    if vis_h >= 0.5 {
+        new_od += adjustments.deconv_stain_h.xyz * c_h * adjustments.deconv_stain_h.w;
+    }
+    if vis_e >= 0.5 {
+        new_od += adjustments.deconv_stain_e.xyz * c_e * adjustments.deconv_stain_e.w;
+    }
+    let new_rgb = exp(-new_od);
+    return vec4<f32>(clamp(new_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
+}
+
 fn apply_adj(color: vec4<f32>) -> vec4<f32> {
     let g = vec3<f32>(
         pow(color.r, adjustments.inv_gamma),
@@ -277,7 +370,7 @@ fn fs_lanczos(input: VertexOutput) -> @location(0) vec4<f32> {
         color = color / weight_sum;
     }
 
-    return apply_adj(apply_stain_norm(apply_sharpen(input.fine_uv, input.fine_layer, clamp(color, vec4<f32>(0.0), vec4<f32>(1.0)))));
+    return apply_adj(apply_deconv(apply_stain_norm(apply_sharpen(input.fine_uv, input.fine_layer, clamp(color, vec4<f32>(0.0), vec4<f32>(1.0))))));
 }
 "#;
 
@@ -323,7 +416,15 @@ struct AdjustmentsUniform {
     // Row 1 of inverse source stain matrix + scale_e
     inv_stain_r1: [f32; 4], // [inv[1][0], inv[1][1], inv[1][2], scale_e]
     sharpness: f32,
-    _pad: [f32; 3],
+    // Color deconvolution parameters
+    deconv_enabled: f32,    // 0.0 = disabled, 1.0 = enabled
+    deconv_isolated: f32,   // 0.0 = blended, 1.0 = H isolated, 2.0 = E isolated
+    _pad0: f32,
+    deconv_inv_row0: [f32; 4], // inverse stain row 0 + H intensity
+    deconv_inv_row1: [f32; 4], // inverse stain row 1 + E intensity
+    deconv_stain_h: [f32; 4],  // H stain OD vector
+    deconv_stain_e: [f32; 4],  // E stain OD vector
+    deconv_visibility: [f32; 4], // [h_vis, e_vis, 0, 0]
 }
 
 #[derive(Clone)]
@@ -338,6 +439,7 @@ pub(crate) struct QueuedFrame {
     pub(crate) stain_norm_enabled: bool,
     pub(crate) inv_stain_r0: [f32; 4],
     pub(crate) inv_stain_r1: [f32; 4],
+    pub(crate) deconv_params: crate::stain::ColorDeconvParams,
 }
 
 impl QueuedFrame {
@@ -356,6 +458,18 @@ impl QueuedFrame {
             v.to_bits().hash(&mut hasher);
         }
         for v in &self.inv_stain_r1 {
+            v.to_bits().hash(&mut hasher);
+        }
+        // Include color deconvolution state in fingerprint
+        self.deconv_params.enabled.hash(&mut hasher);
+        self.deconv_params.isolated_mode.to_bits().hash(&mut hasher);
+        for v in &self.deconv_params.inv_row0 {
+            v.to_bits().hash(&mut hasher);
+        }
+        for v in &self.deconv_params.inv_row1 {
+            v.to_bits().hash(&mut hasher);
+        }
+        for v in &self.deconv_params.visibility {
             v.to_bits().hash(&mut hasher);
         }
         self.draws.len().hash(&mut hasher);
@@ -1187,7 +1301,14 @@ impl GpuRenderer {
             inv_stain_r0: frame.inv_stain_r0,
             inv_stain_r1: frame.inv_stain_r1,
             sharpness: frame.sharpness,
-            _pad: [0.0; 3],
+            deconv_enabled: if frame.deconv_params.enabled { 1.0 } else { 0.0 },
+            deconv_isolated: frame.deconv_params.isolated_mode,
+            _pad0: 0.0,
+            deconv_inv_row0: frame.deconv_params.inv_row0,
+            deconv_inv_row1: frame.deconv_params.inv_row1,
+            deconv_stain_h: frame.deconv_params.stain_h,
+            deconv_stain_e: frame.deconv_params.stain_e,
+            deconv_visibility: frame.deconv_params.visibility,
         };
         if last_adjustments.as_ref() != Some(&adj) {
             runtime

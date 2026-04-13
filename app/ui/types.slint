@@ -82,6 +82,14 @@ export enum StainNormalization {
     vahadane,
 }
 
+/// Which stain channel is currently being viewed in grayscale isolation.
+/// none = normal blended mode, hematoxylin or eosin = isolated grayscale view.
+export enum IsolatedChannel {
+    none,
+    hematoxylin,
+    eosin,
+}
+
 export struct HudSettings {
     show-scale-bar: bool,
     show-hud-toolbar: bool,
@@ -94,6 +102,12 @@ export struct HudSettings {
     stain-normalization: StainNormalization,
     mpp-x: float,
     mpp-y: float,
+    // Color deconvolution state
+    deconv-hematoxylin-intensity: float,
+    deconv-hematoxylin-visible: bool,
+    deconv-eosin-intensity: float,
+    deconv-eosin-visible: bool,
+    deconv-isolated-channel: IsolatedChannel,
 }
 
 export struct PaneViewData {

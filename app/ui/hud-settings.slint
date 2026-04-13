@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { MeasurementUnit, StainNormalization } from "types.slint";
+import { MeasurementUnit, StainNormalization, IsolatedChannel } from "types.slint";
 
 component HudSlider inherits Rectangle {
     in property <string> label;
@@ -90,6 +90,11 @@ export component HudSettingsPanel inherits Rectangle {
     in property <MeasurementUnit> measurement-unit: MeasurementUnit.um;
     in property <StainNormalization> stain-normalization: StainNormalization.none;
     in property <bool> has-adjustments: false;
+    in property <float> deconv-hematoxylin-intensity: 1.0;
+    in property <bool> deconv-hematoxylin-visible: true;
+    in property <float> deconv-eosin-intensity: 1.0;
+    in property <bool> deconv-eosin-visible: true;
+    in property <IsolatedChannel> deconv-isolated-channel: IsolatedChannel.none;
 
     callback sharpness-changed(float);
     callback gamma-changed(float);
@@ -98,6 +103,12 @@ export component HudSettingsPanel inherits Rectangle {
     callback measurement-unit-changed(MeasurementUnit);
     callback stain-normalization-changed(StainNormalization);
     callback reset-adjustments();
+    callback deconv-h-intensity-changed(float);
+    callback deconv-e-intensity-changed(float);
+    callback deconv-h-visibility-toggled();
+    callback deconv-e-visibility-toggled();
+    callback deconv-h-view-toggled();
+    callback deconv-e-view-toggled();
 
     width: 260px;
     height: layout.preferred-height + 33px;
@@ -365,6 +376,273 @@ export component HudSettingsPanel inherits Rectangle {
                         font-size: 10px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: #ffffff12;
+        }
+
+        // Color Deconvolution header
+        Rectangle {
+            height: 24px;
+
+            Text {
+                x: 8px;
+                text: "Color Deconvolution";
+                color: white;
+                font-size: 11px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+
+        // Hematoxylin row
+        Rectangle {
+            height: 28px;
+
+            Text {
+                x: 8px;
+                y: (parent.height - self.height) / 2;
+                width: 24px;
+                text: "H";
+                color: #6a5acd;
+                font-size: 11px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            // Slider area
+            h-slider-area := Rectangle {
+                property <float> normalized: (root.deconv-hematoxylin-intensity - 0.0) / 1.0;
+                property <length> track-left: 24px;
+                property <length> track-right: 72px;
+                property <length> track-width: parent.width - self.track-left - self.track-right;
+
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+
+                Rectangle {
+                    x: parent.track-left;
+                    y: (parent.height - 3px) / 2;
+                    width: parent.track-width;
+                    height: 3px;
+                    border-radius: 1.5px;
+                    background: #ffffff20;
+
+                    Rectangle {
+                        x: 0px;
+                        width: h-slider-area.normalized * parent.width;
+                        height: parent.height;
+                        border-radius: parent.border-radius;
+                        background: #6a5acd;
+                    }
+                }
+
+                Rectangle {
+                    x: parent.track-left + parent.normalized * parent.track-width - 5px;
+                    y: (parent.height - 10px) / 2;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: white;
+                    border-width: 1px;
+                    border-color: #6a5acd;
+                }
+
+                h-slider-touch := TouchArea {
+                    x: parent.track-left - 5px;
+                    y: 0px;
+                    width: parent.track-width + 10px;
+                    height: parent.height;
+
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down || (e.kind == PointerEventKind.move && self.pressed) {
+                            let norm = max(0.0, min(1.0, (self.mouse-x - 5px) / max(parent.track-width, 1px)));
+                            root.deconv-h-intensity-changed(norm);
+                        }
+                    }
+                }
+
+                Text {
+                    x: parent.width - parent.track-right + 4px;
+                    y: (parent.height - self.height) / 2;
+                    width: 28px;
+                    text: Math.round(root.deconv-hematoxylin-intensity * 100) + "%";
+                    color: #e0e0e0;
+                    font-size: 10px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Visibility toggle (eye icon)
+            Rectangle {
+                x: parent.width - 44px;
+                y: (parent.height - 20px) / 2;
+                width: 20px;
+                height: 20px;
+                border-radius: 3px;
+                background: h-vis-touch.has-hover ? #ffffff15 : transparent;
+
+                h-vis-touch := TouchArea {
+                    clicked => {
+                        root.deconv-h-visibility-toggled();
+                    }
+                }
+
+                Text {
+                    text: root.deconv-hematoxylin-visible ? "👁" : "✕";
+                    color: root.deconv-hematoxylin-visible ? #e0e0e0 : #666666;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // View/isolate button
+            Rectangle {
+                x: parent.width - 22px;
+                y: (parent.height - 20px) / 2;
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.deconv-isolated-channel == IsolatedChannel.hematoxylin ? #6a5acd : h-view-touch.has-hover ? #ffffff15 : transparent;
+                border-width: 1px;
+                border-color: root.deconv-isolated-channel == IsolatedChannel.hematoxylin ? #6a5acd : #666666;
+
+                h-view-touch := TouchArea {
+                    clicked => {
+                        root.deconv-h-view-toggled();
+                    }
+                }
+            }
+        }
+
+        // Eosin row
+        Rectangle {
+            height: 28px;
+
+            Text {
+                x: 8px;
+                y: (parent.height - self.height) / 2;
+                width: 24px;
+                text: "E";
+                color: #e05070;
+                font-size: 11px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            // Slider area
+            e-slider-area := Rectangle {
+                property <float> normalized: (root.deconv-eosin-intensity - 0.0) / 1.0;
+                property <length> track-left: 24px;
+                property <length> track-right: 72px;
+                property <length> track-width: parent.width - self.track-left - self.track-right;
+
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height;
+
+                Rectangle {
+                    x: parent.track-left;
+                    y: (parent.height - 3px) / 2;
+                    width: parent.track-width;
+                    height: 3px;
+                    border-radius: 1.5px;
+                    background: #ffffff20;
+
+                    Rectangle {
+                        x: 0px;
+                        width: e-slider-area.normalized * parent.width;
+                        height: parent.height;
+                        border-radius: parent.border-radius;
+                        background: #e05070;
+                    }
+                }
+
+                Rectangle {
+                    x: parent.track-left + parent.normalized * parent.track-width - 5px;
+                    y: (parent.height - 10px) / 2;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: white;
+                    border-width: 1px;
+                    border-color: #e05070;
+                }
+
+                e-slider-touch := TouchArea {
+                    x: parent.track-left - 5px;
+                    y: 0px;
+                    width: parent.track-width + 10px;
+                    height: parent.height;
+
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down || (e.kind == PointerEventKind.move && self.pressed) {
+                            let norm = max(0.0, min(1.0, (self.mouse-x - 5px) / max(parent.track-width, 1px)));
+                            root.deconv-e-intensity-changed(norm);
+                        }
+                    }
+                }
+
+                Text {
+                    x: parent.width - parent.track-right + 4px;
+                    y: (parent.height - self.height) / 2;
+                    width: 28px;
+                    text: Math.round(root.deconv-eosin-intensity * 100) + "%";
+                    color: #e0e0e0;
+                    font-size: 10px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Visibility toggle (eye icon)
+            Rectangle {
+                x: parent.width - 44px;
+                y: (parent.height - 20px) / 2;
+                width: 20px;
+                height: 20px;
+                border-radius: 3px;
+                background: e-vis-touch.has-hover ? #ffffff15 : transparent;
+
+                e-vis-touch := TouchArea {
+                    clicked => {
+                        root.deconv-e-visibility-toggled();
+                    }
+                }
+
+                Text {
+                    text: root.deconv-eosin-visible ? "👁" : "✕";
+                    color: root.deconv-eosin-visible ? #e0e0e0 : #666666;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // View/isolate button
+            Rectangle {
+                x: parent.width - 22px;
+                y: (parent.height - 20px) / 2;
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.deconv-isolated-channel == IsolatedChannel.eosin ? #e05070 : e-view-touch.has-hover ? #ffffff15 : transparent;
+                border-width: 1px;
+                border-color: root.deconv-isolated-channel == IsolatedChannel.eosin ? #e05070 : #666666;
+
+                e-view-touch := TouchArea {
+                    clicked => {
+                        root.deconv-e-view-toggled();
                     }
                 }
             }

@@ -175,6 +175,12 @@ export component AppWindow inherits Window {
     callback hud-stain-normalization-changed(int, StainNormalization);
     callback hud-reset-adjustments(int);
     callback hud-zoom-input(int, float);
+    callback hud-deconv-h-intensity-changed(int, float);
+    callback hud-deconv-e-intensity-changed(int, float);
+    callback hud-deconv-h-visibility-toggled(int);
+    callback hud-deconv-e-visibility-toggled(int);
+    callback hud-deconv-h-view-toggled(int);
+    callback hud-deconv-e-view-toggled(int);
 
     property <length> toolbar-height: 40px;
     property <length> pane-gap: 6px;
@@ -555,6 +561,24 @@ export component AppWindow inherits Window {
                 }
                 hud-zoom-input(pane, v) => {
                     root.hud-zoom-input(pane, v);
+                }
+                hud-deconv-h-intensity-changed(pane, v) => {
+                    root.hud-deconv-h-intensity-changed(pane, v);
+                }
+                hud-deconv-e-intensity-changed(pane, v) => {
+                    root.hud-deconv-e-intensity-changed(pane, v);
+                }
+                hud-deconv-h-visibility-toggled(pane) => {
+                    root.hud-deconv-h-visibility-toggled(pane);
+                }
+                hud-deconv-e-visibility-toggled(pane) => {
+                    root.hud-deconv-e-visibility-toggled(pane);
+                }
+                hud-deconv-h-view-toggled(pane) => {
+                    root.hud-deconv-h-view-toggled(pane);
+                }
+                hud-deconv-e-view-toggled(pane) => {
+                    root.hud-deconv-e-view-toggled(pane);
                 }
             }
 

@@ -17,6 +17,15 @@ pub struct PaneState {
 }
 
 /// Per-tab HUD settings
+/// Which stain channel is being viewed in grayscale isolation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IsolatedChannel {
+    #[default]
+    None,
+    Hematoxylin,
+    Eosin,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HudSettings {
     pub show_scale_bar: bool,
@@ -28,6 +37,12 @@ pub struct HudSettings {
     pub contrast: f32,
     pub measurement_unit: MeasurementUnit,
     pub stain_normalization: StainNormalization,
+    // Color deconvolution state
+    pub deconv_hematoxylin_intensity: f32,
+    pub deconv_hematoxylin_visible: bool,
+    pub deconv_eosin_intensity: f32,
+    pub deconv_eosin_visible: bool,
+    pub deconv_isolated_channel: IsolatedChannel,
 }
 
 impl Default for HudSettings {
@@ -42,6 +57,11 @@ impl Default for HudSettings {
             contrast: 1.0,
             measurement_unit: MeasurementUnit::Um,
             stain_normalization: StainNormalization::None,
+            deconv_hematoxylin_intensity: 1.0,
+            deconv_hematoxylin_visible: true,
+            deconv_eosin_intensity: 1.0,
+            deconv_eosin_visible: true,
+            deconv_isolated_channel: IsolatedChannel::None,
         }
     }
 }
@@ -53,6 +73,21 @@ impl HudSettings {
         self.brightness = 0.0;
         self.contrast = 1.0;
         self.stain_normalization = StainNormalization::None;
+        self.deconv_hematoxylin_intensity = 1.0;
+        self.deconv_hematoxylin_visible = true;
+        self.deconv_eosin_intensity = 1.0;
+        self.deconv_eosin_visible = true;
+        self.deconv_isolated_channel = IsolatedChannel::None;
+    }
+
+    /// Returns true if color deconvolution is effectively active (any channel
+    /// has non-default settings).
+    pub fn deconv_active(&self) -> bool {
+        self.deconv_isolated_channel != IsolatedChannel::None
+            || !self.deconv_hematoxylin_visible
+            || !self.deconv_eosin_visible
+            || (self.deconv_hematoxylin_intensity - 1.0).abs() > 0.001
+            || (self.deconv_eosin_intensity - 1.0).abs() > 0.001
     }
 }
 
@@ -312,6 +347,11 @@ pub struct FilePaneState {
     pub last_render_contrast: f32,
     pub last_render_sharpness: f32,
     pub last_render_stain_normalization: StainNormalization,
+    pub last_render_deconv_h_intensity: f32,
+    pub last_render_deconv_h_visible: bool,
+    pub last_render_deconv_e_intensity: f32,
+    pub last_render_deconv_e_visible: bool,
+    pub last_render_deconv_isolated: IsolatedChannel,
     pub hud: HudSettings,
     /// Cached stain normalization parameters.
     pub cached_stain_params: Option<crate::stain::StainNormParams>,
@@ -346,6 +386,11 @@ impl FilePaneState {
             last_render_contrast: 1.0,
             last_render_sharpness: 0.0,
             last_render_stain_normalization: StainNormalization::None,
+            last_render_deconv_h_intensity: 1.0,
+            last_render_deconv_h_visible: true,
+            last_render_deconv_e_intensity: 1.0,
+            last_render_deconv_e_visible: true,
+            last_render_deconv_isolated: IsolatedChannel::None,
             hud: HudSettings::default(),
             cached_stain_params: None,
             stain_params_epoch: 0,
