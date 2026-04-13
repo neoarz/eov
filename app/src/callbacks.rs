@@ -327,19 +327,173 @@ fn slint_to_export_settings(s: &SlintExportSettings) -> common::ExportSettings {
     }
 }
 
+fn slint_color_to_overlay(color: slint::Color, opacity_pct: f32) -> common::overlay::OverlayColor {
+    let a = (color.alpha() as f32 * opacity_pct / 100.0).round().clamp(0.0, 255.0) as u8;
+    common::overlay::OverlayColor::new(color.red(), color.green(), color.blue(), a)
+}
+
+fn slint_stroke_to_overlay(
+    style: crate::StrokeStyle,
+    dash_length: f32,
+    dash_gap: f32,
+    dot_spacing: f32,
+) -> common::overlay::StrokeStyle {
+    match style {
+        crate::StrokeStyle::Solid => common::overlay::StrokeStyle::Solid,
+        crate::StrokeStyle::Dashed => common::overlay::StrokeStyle::Dashed {
+            length: dash_length,
+            gap: dash_gap,
+        },
+        crate::StrokeStyle::Dotted => common::overlay::StrokeStyle::Dotted {
+            spacing: dot_spacing,
+        },
+    }
+}
+
+fn slint_cap_to_overlay(cap: crate::CapStyle) -> common::overlay::CapStyle {
+    match cap {
+        crate::CapStyle::Round => common::overlay::CapStyle::Round,
+        crate::CapStyle::Square => common::overlay::CapStyle::Square,
+        crate::CapStyle::Flat => common::overlay::CapStyle::Flat,
+    }
+}
+
+/// Draw measurement overlays on an export image buffer.
+fn draw_measurement_overlays(
+    image_data: &mut common::RgbaImageData,
+    file: &state::OpenFile,
+    pane: PaneId,
+    export_vp: &common::Viewport,
+    settings: &SlintExportSettings,
+    dpi_scale: f32,
+) {
+    if !settings.show_measurement || !settings.has_measurement {
+        return;
+    }
+    let color = slint_color_to_overlay(settings.measurement_color, settings.measurement_opacity);
+    let stroke = slint_stroke_to_overlay(
+        settings.measurement_stroke_style,
+        settings.measurement_dash_length * dpi_scale,
+        settings.measurement_dash_gap * dpi_scale,
+        settings.measurement_dot_spacing * dpi_scale,
+    );
+    let cap = slint_cap_to_overlay(settings.measurement_cap_style);
+    let thickness = settings.measurement_thickness * dpi_scale;
+    let w = image_data.width as u32;
+    let h = image_data.height as u32;
+
+    for m in &file.measurements {
+        if m.pane != pane {
+            continue;
+        }
+        let p1 = export_vp.image_to_screen(m.start.x, m.start.y);
+        let p2 = export_vp.image_to_screen(m.end.x, m.end.y);
+
+        // Draw line
+        common::overlay::draw_line(
+            &mut image_data.pixels,
+            w, h,
+            p1.x as f32, p1.y as f32,
+            p2.x as f32, p2.y as f32,
+            color, thickness, stroke, cap,
+        );
+
+        // Endpoint circles (white border + filled color, matching viewport style)
+        let endpoint_r = (thickness + 1.0) * 0.5 + 1.0 * dpi_scale;
+        let white = common::overlay::OverlayColor::new(255, 255, 255, color.a);
+        for p in [p1, p2] {
+            common::overlay::draw_filled_circle(
+                &mut image_data.pixels, w, h,
+                p.x as f32, p.y as f32,
+                endpoint_r + 1.5 * dpi_scale,
+                white,
+            );
+            common::overlay::draw_filled_circle(
+                &mut image_data.pixels, w, h,
+                p.x as f32, p.y as f32,
+                endpoint_r,
+                color,
+            );
+        }
+    }
+}
+
+/// Draw ROI overlays on an export image buffer.
+fn draw_roi_overlays(
+    image_data: &mut common::RgbaImageData,
+    file: &state::OpenFile,
+    export_vp: &common::Viewport,
+    settings: &SlintExportSettings,
+    dpi_scale: f32,
+) {
+    let Some(roi) = &file.roi else { return };
+    let w = image_data.width as u32;
+    let h = image_data.height as u32;
+    let tl = export_vp.image_to_screen(roi.x, roi.y);
+    let br = export_vp.image_to_screen(roi.x + roi.width, roi.y + roi.height);
+    let rx = tl.x as f32;
+    let ry = tl.y as f32;
+    let rw = (br.x - tl.x) as f32;
+    let rh = (br.y - tl.y) as f32;
+
+    // Outside overlay (drawn first, beneath the outline)
+    if settings.roi_outside_overlay {
+        let outside_color = slint_color_to_overlay(
+            settings.roi_outside_color,
+            settings.roi_outside_opacity,
+        );
+        common::overlay::fill_outside_rect(
+            &mut image_data.pixels, w, h,
+            rx, ry, rw, rh,
+            outside_color,
+        );
+    }
+
+    // ROI outline
+    if settings.show_roi_outline && settings.has_roi {
+        let color = slint_color_to_overlay(settings.roi_color, settings.roi_opacity);
+        let stroke = slint_stroke_to_overlay(
+            settings.roi_stroke_style,
+            settings.roi_dash_length * dpi_scale,
+            settings.roi_dash_gap * dpi_scale,
+            settings.roi_dot_spacing * dpi_scale,
+        );
+        let cap = slint_cap_to_overlay(settings.roi_cap_style);
+        let thickness = settings.roi_thickness * dpi_scale;
+        common::overlay::draw_rect_outline(
+            &mut image_data.pixels, w, h,
+            rx, ry, rw, rh,
+            color, thickness, stroke, cap,
+        );
+    }
+}
+
 /// Render an export preview/final image using the common crate's export renderer.
+///
+/// If `override_dpi` is `Some(dpi)`, renders at that DPI instead of the
+/// settings' DPI.  Used for preview (always 96 DPI) vs. final export.
 fn render_export_image(
     state: &AppState,
     tile_cache: &Arc<TileCache>,
     pane: PaneId,
     slint_settings: &SlintExportSettings,
+    override_dpi: Option<u32>,
 ) -> Option<common::RgbaImageData> {
     let file_id = state.active_file_id_for_pane(pane)?;
     let file = state.get_file(file_id)?;
     let pane_state = file.pane_state(pane)?;
     let viewport = &pane_state.viewport.viewport;
-    let settings = slint_to_export_settings(slint_settings);
-    common::export::render_export(&file.tile_manager, tile_cache, viewport, &settings)
+    let mut settings = slint_to_export_settings(slint_settings);
+    let render_dpi = override_dpi.unwrap_or(settings.dpi);
+    settings.dpi = render_dpi;
+    let mut img = common::export::render_export(&file.tile_manager, tile_cache, viewport, &settings)?;
+
+    // Draw overlays
+    let export_vp = common::export::export_viewport(viewport, render_dpi);
+    let dpi_scale = render_dpi as f32 / 96.0;
+    draw_measurement_overlays(&mut img, file, pane, &export_vp, slint_settings, dpi_scale);
+    draw_roi_overlays(&mut img, file, &export_vp, slint_settings, dpi_scale);
+    Some(img)
 }
 
 /// Build default export settings based on the current viewport state.
@@ -411,49 +565,42 @@ fn open_export_dialog(ui: &AppWindow, state: &Arc<RwLock<AppState>>, tile_cache:
     };
     ui.set_export_settings(settings.clone());
 
-    // Render preview using the common export renderer
-    let (preview_image, width_px, height_px) = {
+    // Render preview at 96 DPI (thumbnail-sized, independent of settings DPI)
+    let (preview_image, vp_width, vp_height) = {
         let state = state.read();
-        if let Some(img) = render_export_image(&state, tile_cache, pane, &settings) {
-            let w = img.width as u32;
-            let h = img.height as u32;
-            let slint_img = if let Some(buf) = crate::blitter::create_image_buffer(&img.pixels, w, h) {
-                slint::Image::from_rgba8(buf)
-            } else {
-                slint::Image::default()
-            };
-            (slint_img, w as i32, h as i32)
-        } else {
-            // Fallback to cached viewport image
-            if let Some(image_data) = capture_pane_clipboard_image(pane) {
-                let w = image_data.width as u32;
-                let h = image_data.height as u32;
-                let slint_img = if let Some(buf) = crate::blitter::create_image_buffer(&image_data.pixels, w, h) {
-                    slint::Image::from_rgba8(buf)
-                } else {
-                    slint::Image::default()
-                };
-                (slint_img, w as i32, h as i32)
-            } else {
-                (slint::Image::default(), 0, 0)
-            }
-        }
-    };
+        let (vp_w, vp_h) = state
+            .active_file_id_for_pane(pane)
+            .and_then(|id| state.get_file(id))
+            .and_then(|f| f.pane_state(pane))
+            .map(|ps| (ps.viewport.viewport.width, ps.viewport.viewport.height))
+            .unwrap_or((0.0, 0.0));
 
-    let bytes_per_pixel: f64 = if settings.format == SlintExportFormat::Png {
-        4.0
-    } else {
-        let q = settings.jpeg_quality.clamp(1, 100) as f64;
-        0.3 + (q / 100.0) * 2.5
+        let img = render_export_image(&state, tile_cache, pane, &settings, Some(96));
+        let slint_img = img
+            .and_then(|img| {
+                let w = img.width as u32;
+                let h = img.height as u32;
+                crate::blitter::create_image_buffer(&img.pixels, w, h)
+                    .map(slint::Image::from_rgba8)
+            })
+            .or_else(|| {
+                capture_pane_clipboard_image(pane).and_then(|d| {
+                    crate::blitter::create_image_buffer(&d.pixels, d.width as u32, d.height as u32)
+                        .map(slint::Image::from_rgba8)
+                })
+            })
+            .unwrap_or_default();
+
+        (slint_img, vp_w, vp_h)
     };
-    let estimated_bytes = (width_px as f64) * (height_px as f64) * bytes_per_pixel;
-    let estimated_mb = estimated_bytes / (1024.0 * 1024.0);
 
     let preview_info = SlintExportPreviewInfo {
         preview_image,
-        estimated_size_mb: estimated_mb as f32,
-        width_px,
-        height_px,
+        estimated_size_mb: 0.0, // computed reactively in Slint
+        width_px: 0,            // computed reactively in Slint
+        height_px: 0,           // computed reactively in Slint
+        viewport_width: vp_width as f32,
+        viewport_height: vp_height as f32,
     };
     ui.set_export_preview_info(preview_info);
     ui.set_export_dialog_visible(true);
@@ -1968,39 +2115,21 @@ pub fn setup_callbacks(
                 let state = state_handle.read();
                 let pane = state.focused_pane;
 
-                let (preview_image, width_px, height_px) =
-                    if let Some(img) = render_export_image(&state, &tile_cache_clone, pane, &settings) {
+                // Render at 96 DPI for preview (thumbnail-sized)
+                let preview_image =
+                    if let Some(img) = render_export_image(&state, &tile_cache_clone, pane, &settings, Some(96)) {
                         let w = img.width as u32;
                         let h = img.height as u32;
-                        let slint_img = if let Some(buf) = crate::blitter::create_image_buffer(&img.pixels, w, h) {
-                            slint::Image::from_rgba8(buf)
-                        } else {
-                            slint::Image::default()
-                        };
-                        (slint_img, w as i32, h as i32)
+                        crate::blitter::create_image_buffer(&img.pixels, w, h)
+                            .map(slint::Image::from_rgba8)
+                            .unwrap_or_default()
                     } else {
-                        let prev = ui.get_export_preview_info();
-                        (prev.preview_image, prev.width_px, prev.height_px)
+                        ui.get_export_preview_info().preview_image
                     };
 
-                let bytes_per_pixel: f64 =
-                    if settings.format == SlintExportFormat::Png {
-                        4.0
-                    } else {
-                        let q = settings.jpeg_quality.clamp(1, 100) as f64;
-                        0.3 + (q / 100.0) * 2.5
-                    };
-                let estimated_bytes =
-                    (width_px as f64) * (height_px as f64) * bytes_per_pixel;
-                let estimated_mb = estimated_bytes / (1024.0 * 1024.0);
-
-                let preview_info = SlintExportPreviewInfo {
-                    preview_image,
-                    estimated_size_mb: estimated_mb as f32,
-                    width_px,
-                    height_px,
-                };
-                ui.set_export_preview_info(preview_info);
+                let mut info = ui.get_export_preview_info();
+                info.preview_image = preview_image;
+                ui.set_export_preview_info(info);
             }
         });
     }
@@ -2035,7 +2164,7 @@ pub fn setup_callbacks(
                 let state = state_handle.read();
                 let pane = state.focused_pane;
 
-                let image_data = render_export_image(&state, &tile_cache_clone, pane, &settings);
+                let image_data = render_export_image(&state, &tile_cache_clone, pane, &settings, None);
                 drop(state);
 
                 let Some(image_data) = image_data else {

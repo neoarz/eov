@@ -51,6 +51,25 @@ impl Default for ExportSettings {
     }
 }
 
+/// Construct the viewport used for export rendering at the given DPI.
+///
+/// This is useful for converting image coordinates to export-buffer
+/// coordinates when drawing overlays.
+pub fn export_viewport(viewport: &Viewport, dpi: u32) -> Viewport {
+    let scale = dpi.max(1) as f64 / 96.0;
+    let export_width = (viewport.width * scale).round().max(1.0);
+    let export_height = (viewport.height * scale).round().max(1.0);
+    let export_zoom = viewport.zoom * scale;
+    Viewport {
+        center: viewport.center,
+        zoom: export_zoom,
+        width: export_width,
+        height: export_height,
+        image_width: viewport.image_width,
+        image_height: viewport.image_height,
+    }
+}
+
 /// Render the current viewport at the requested DPI, applying all export
 /// settings. Returns `None` if the viewport or WSI is in an invalid state.
 ///

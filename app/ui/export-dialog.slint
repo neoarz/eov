@@ -21,11 +21,14 @@ component ExportSlider inherits Rectangle {
     in property <float> min-value: 0.0;
     in property <float> max-value: 1.0;
     in property <string> display-text;
+    in property <bool> enabled: true;
+    in-out property <int> global-drag-count: 0;
     callback changed(float);
     callback released();
 
     height: 32px;
     background: transparent;
+    opacity: root.enabled ? 1.0 : 0.4;
 
     property <float> normalized: (value - min-value) / max(max-value - min-value, 0.001);
     property <length> track-left: 0px;
@@ -61,17 +64,22 @@ component ExportSlider inherits Rectangle {
     }
 
     slider-touch := TouchArea {
+        enabled: root.enabled;
         x: root.track-left - 6px;
         y: 0px;
         width: root.track-width + 12px;
         height: root.height;
 
         pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.global-drag-count = root.global-drag-count + 1;
+            }
             if e.kind == PointerEventKind.down || (e.kind == PointerEventKind.move && self.pressed) {
                 let norm = max(0.0, min(1.0, (self.mouse-x - 6px) / max(root.track-width, 1px)));
                 root.changed(root.min-value + norm * (root.max-value - root.min-value));
             }
             if e.kind == PointerEventKind.up {
+                root.global-drag-count = root.global-drag-count - 1;
                 root.released();
             }
         }
@@ -511,6 +519,15 @@ export component ExportDialog inherits Rectangle {
     callback reset-requested();
     callback settings-changed(ExportSettings);
 
+    // Counter of actively-dragged sliders; disables Flickable scrolling.
+    property <int> active-slider-count: 0;
+
+    // Reactive export dimensions (update instantly when DPI changes).
+    property <int> export-width: Math.max(1, Math.round(root.preview-info.viewport-width * root.settings.dpi / 96));
+    property <int> export-height: Math.max(1, Math.round(root.preview-info.viewport-height * root.settings.dpi / 96));
+    property <float> bytes-per-pixel: root.settings.format == ExportFormat.png ? 4.0 : (0.3 + root.settings.jpeg-quality / 100.0 * 2.5);
+    property <float> estimated-mb: root.export-width * root.export-height * root.bytes-per-pixel / 1048576.0;
+
     // Emit settings-changed after any modification
     function notify-settings() {
         root.settings-changed(root.settings);
@@ -604,13 +621,13 @@ export component ExportDialog inherits Rectangle {
                         alignment: center;
 
                         Text {
-                            text: "Estimated Size: " + (Math.round(root.preview-info.estimated-size-mb * 100) / 100) + " MB";
+                            text: "Estimated Size: " + (Math.round(root.estimated-mb * 100) / 100) + " MB";
                             color: #8ea0b2;
                             font-size: 10px;
                         }
 
                         Text {
-                            text: root.preview-info.width-px + " × " + root.preview-info.height-px + " px";
+                            text: root.export-width + " × " + root.export-height + " px";
                             color: #8ea0b2;
                             font-size: 10px;
                         }
@@ -626,6 +643,7 @@ export component ExportDialog inherits Rectangle {
             Flickable {
                 vertical-stretch: 1;
                 viewport-height: settings-content.preferred-height;
+                interactive: root.active-slider-count <= 0;
 
                 settings-content := VerticalLayout {
                     padding: 16px;
@@ -646,8 +664,10 @@ export component ExportDialog inherits Rectangle {
                             min-value: 72;
                             max-value: 600;
                             display-text: "";
+                            global-drag-count <=> root.active-slider-count;
                             changed(v) => {
                                 root.settings.dpi = Math.round(v);
+                                root.settings-changed(root.settings);
                             }
                             released => {
                                 root.notify-settings();
@@ -782,8 +802,10 @@ export component ExportDialog inherits Rectangle {
                         min-value: 0.0;
                         max-value: 1.0;
                         display-text: Math.round(root.settings.sharpness * 100) + "%";
+                        global-drag-count <=> root.active-slider-count;
                         changed(v) => {
                             root.settings.sharpness = v;
+                            root.settings-changed(root.settings);
                         }
                         released => {
                             root.notify-settings();
@@ -797,8 +819,10 @@ export component ExportDialog inherits Rectangle {
                         min-value: 0.2;
                         max-value: 3.0;
                         display-text: Math.round(root.settings.gamma * 100) / 100 + "";
+                        global-drag-count <=> root.active-slider-count;
                         changed(v) => {
                             root.settings.gamma = v;
+                            root.settings-changed(root.settings);
                         }
                         released => {
                             root.notify-settings();
@@ -812,8 +836,10 @@ export component ExportDialog inherits Rectangle {
                         min-value: -1.0;
                         max-value: 1.0;
                         display-text: (root.settings.brightness >= 0 ? "+" : "") + Math.round(root.settings.brightness * 100) + "%";
+                        global-drag-count <=> root.active-slider-count;
                         changed(v) => {
                             root.settings.brightness = v;
+                            root.settings-changed(root.settings);
                         }
                         released => {
                             root.notify-settings();
@@ -827,8 +853,10 @@ export component ExportDialog inherits Rectangle {
                         min-value: 0.2;
                         max-value: 3.0;
                         display-text: Math.round(root.settings.contrast * 100) / 100 + "x";
+                        global-drag-count <=> root.active-slider-count;
                         changed(v) => {
                             root.settings.contrast = v;
+                            root.settings-changed(root.settings);
                         }
                         released => {
                             root.notify-settings();
@@ -919,8 +947,10 @@ export component ExportDialog inherits Rectangle {
                             min-value: 0.5;
                             max-value: 10.0;
                             display-text: Math.round(root.settings.measurement-thickness * 10) / 10 + "px";
+                            global-drag-count <=> root.active-slider-count;
                             changed(v) => {
                                 root.settings.measurement-thickness = v;
+                                root.settings-changed(root.settings);
                             }
                             released => {
                                 root.notify-settings();
@@ -966,8 +996,10 @@ export component ExportDialog inherits Rectangle {
                             min-value: 6;
                             max-value: 32;
                             display-text: Math.round(root.settings.measurement-font-size) + "pt";
+                            global-drag-count <=> root.active-slider-count;
                             changed(v) => {
                                 root.settings.measurement-font-size = v;
+                                root.settings-changed(root.settings);
                             }
                             released => {
                                 root.notify-settings();
@@ -1017,8 +1049,10 @@ export component ExportDialog inherits Rectangle {
                             min-value: 0.5;
                             max-value: 10.0;
                             display-text: Math.round(root.settings.roi-thickness * 10) / 10 + "px";
+                            global-drag-count <=> root.active-slider-count;
                             changed(v) => {
                                 root.settings.roi-thickness = v;
+                                root.settings-changed(root.settings);
                             }
                             released => {
                                 root.notify-settings();
@@ -1121,18 +1155,21 @@ export component ExportDialog inherits Rectangle {
                         }
                     }
 
-                    if root.settings.format == ExportFormat.jpeg: VerticalLayout {
+                    VerticalLayout {
                         spacing: 4px;
 
                         LabelRow { label: "Quality"; }
 
                         ExportSlider {
+                            enabled: root.settings.format == ExportFormat.jpeg;
                             value: root.settings.jpeg-quality;
                             min-value: 1;
                             max-value: 100;
                             display-text: root.settings.jpeg-quality + "%";
+                            global-drag-count <=> root.active-slider-count;
                             changed(v) => {
                                 root.settings.jpeg-quality = Math.round(v);
+                                root.settings-changed(root.settings);
                             }
                             released => {
                                 root.notify-settings();

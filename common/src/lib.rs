@@ -9,6 +9,7 @@ pub mod error;
 pub mod export;
 pub mod formatting;
 pub mod imaging;
+pub mod overlay;
 pub mod postprocess;
 pub mod render;
 pub mod stain;
