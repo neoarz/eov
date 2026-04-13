@@ -1857,6 +1857,28 @@ pub fn setup_callbacks(
             let render_timer = Rc::clone(&render_timer);
 
             move |slint_window, event| match event {
+                winit::event::WindowEvent::Resized(_) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        request_render_loop(
+                            &render_timer,
+                            &ui.as_weak(),
+                            &state_handle,
+                            &tile_cache,
+                        );
+                    }
+                    EventResult::Propagate
+                }
+                winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        request_render_loop(
+                            &render_timer,
+                            &ui.as_weak(),
+                            &state_handle,
+                            &tile_cache,
+                        );
+                    }
+                    EventResult::Propagate
+                }
                 winit::event::WindowEvent::ModifiersChanged(next_modifiers) => {
                     modifiers.set(next_modifiers.state());
                     EventResult::Propagate
