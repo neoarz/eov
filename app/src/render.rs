@@ -1277,7 +1277,7 @@ fn render_cpu_pane_from_snapshot(
         });
     }
 
-    let stain_params = if !is_moving && snapshot.hud_stain_normalization != StainNormalization::None
+    let stain_params = if snapshot.hud_stain_normalization != StainNormalization::None
     {
         let tile_slices: Vec<&[u8]> = cached_tiles
             .fine_tiles
@@ -1301,6 +1301,40 @@ fn render_cpu_pane_from_snapshot(
         None
     };
 
+    // Build color deconvolution params from HUD state.
+    let deconv_params = if snapshot.hud_deconv_isolated != crate::state::IsolatedChannel::None
+        || !snapshot.hud_deconv_h_visible
+        || !snapshot.hud_deconv_e_visible
+        || (snapshot.hud_deconv_h_intensity - 1.0).abs() > 0.001
+        || (snapshot.hud_deconv_e_intensity - 1.0).abs() > 0.001
+    {
+        let isolated = match snapshot.hud_deconv_isolated {
+            crate::state::IsolatedChannel::None => 0u8,
+            crate::state::IsolatedChannel::Hematoxylin => 1u8,
+            crate::state::IsolatedChannel::Eosin => 2u8,
+        };
+        let params = crate::stain::build_deconv_params(
+            snapshot.hud_deconv_h_intensity,
+            snapshot.hud_deconv_h_visible,
+            snapshot.hud_deconv_e_intensity,
+            snapshot.hud_deconv_e_visible,
+            isolated,
+            stain_params.as_ref(),
+        );
+        if params.enabled { Some(params) } else { None }
+    } else {
+        None
+    };
+
+    let postprocess = CpuRenderPostProcess {
+        stain_params: stain_params.clone(),
+        deconv_params: deconv_params.clone(),
+        sharpness: snapshot.hud_sharpness,
+        gamma: snapshot.hud_gamma,
+        brightness: snapshot.hud_brightness,
+        contrast: snapshot.hud_contrast,
+    };
+
     let preview_image = if is_moving {
         render_cached_preview(
             snapshot.pane,
@@ -1310,6 +1344,7 @@ fn render_cpu_pane_from_snapshot(
             render_height,
             &fallback_commands,
             &fine_commands,
+            &postprocess,
         )
     } else {
         None
@@ -1318,31 +1353,6 @@ fn render_cpu_pane_from_snapshot(
     if pending_cpu_job_id.is_none()
         && let Some(pool) = crate::render_pool::global()
     {
-        // Build color deconvolution params from HUD state.
-        let deconv_params = if snapshot.hud_deconv_isolated != crate::state::IsolatedChannel::None
-            || !snapshot.hud_deconv_h_visible
-            || !snapshot.hud_deconv_e_visible
-            || (snapshot.hud_deconv_h_intensity - 1.0).abs() > 0.001
-            || (snapshot.hud_deconv_e_intensity - 1.0).abs() > 0.001
-        {
-            let isolated = match snapshot.hud_deconv_isolated {
-                crate::state::IsolatedChannel::None => 0u8,
-                crate::state::IsolatedChannel::Hematoxylin => 1u8,
-                crate::state::IsolatedChannel::Eosin => 2u8,
-            };
-            let params = crate::stain::build_deconv_params(
-                snapshot.hud_deconv_h_intensity,
-                snapshot.hud_deconv_h_visible,
-                snapshot.hud_deconv_e_intensity,
-                snapshot.hud_deconv_e_visible,
-                isolated,
-                stain_params.as_ref(),
-            );
-            if params.enabled { Some(params) } else { None }
-        } else {
-            None
-        };
-
         let job_id = pool.next_job_id();
         pool.submit(CpuRenderJob {
             pane_index: snapshot.pane.0,
@@ -1354,18 +1364,7 @@ fn render_cpu_pane_from_snapshot(
             background_rgba: [30, 30, 30, 255],
             fallback_blits: fallback_commands,
             fine_blits: fine_commands,
-            postprocess: CpuRenderPostProcess {
-                stain_params: if is_moving { None } else { stain_params },
-                deconv_params,
-                sharpness: if is_moving {
-                    0.0
-                } else {
-                    snapshot.hud_sharpness
-                },
-                gamma: snapshot.hud_gamma,
-                brightness: snapshot.hud_brightness,
-                contrast: snapshot.hud_contrast,
-            },
+            postprocess,
             settled_quality: !is_moving,
         });
         commit.pending_cpu_job_id = Some(Some(job_id));
@@ -1922,7 +1921,7 @@ fn render_pane_to_image(
         });
     }
 
-    let stain_params = if !is_moving && hud_stain_normalization != StainNormalization::None {
+    let stain_params = if hud_stain_normalization != StainNormalization::None {
         let tile_slices: Vec<&[u8]> = cached_tiles
             .fine_tiles
             .iter()
@@ -1953,6 +1952,40 @@ fn render_pane_to_image(
         None
     };
 
+    // Build color deconvolution params for the CPU path.
+    let deconv_params = if hud_deconv_isolated != crate::state::IsolatedChannel::None
+        || !hud_deconv_h_visible
+        || !hud_deconv_e_visible
+        || (hud_deconv_h_intensity - 1.0).abs() > 0.001
+        || (hud_deconv_e_intensity - 1.0).abs() > 0.001
+    {
+        let isolated = match hud_deconv_isolated {
+            crate::state::IsolatedChannel::None => 0u8,
+            crate::state::IsolatedChannel::Hematoxylin => 1u8,
+            crate::state::IsolatedChannel::Eosin => 2u8,
+        };
+        let params = crate::stain::build_deconv_params(
+            hud_deconv_h_intensity,
+            hud_deconv_h_visible,
+            hud_deconv_e_intensity,
+            hud_deconv_e_visible,
+            isolated,
+            stain_params.as_ref(),
+        );
+        if params.enabled { Some(params) } else { None }
+    } else {
+        None
+    };
+
+    let postprocess = CpuRenderPostProcess {
+        stain_params: stain_params.clone(),
+        deconv_params: deconv_params.clone(),
+        sharpness: hud_sharpness,
+        gamma: hud_gamma,
+        brightness: hud_brightness,
+        contrast: hud_contrast,
+    };
+
     let preview_image = if is_moving {
         render_cached_preview(
             pane,
@@ -1962,6 +1995,7 @@ fn render_pane_to_image(
             render_height,
             &fallback_commands,
             &fine_commands,
+            &postprocess,
         )
     } else {
         None
@@ -1971,31 +2005,6 @@ fn render_pane_to_image(
     if submit_cpu_job && pending_cpu_job_id.is_none() {
         let Some(pool) = crate::render_pool::global() else {
             return PaneRenderOutcome::default();
-        };
-
-        // Build color deconvolution params for the CPU fallback path.
-        let deconv_params = if hud_deconv_isolated != crate::state::IsolatedChannel::None
-            || !hud_deconv_h_visible
-            || !hud_deconv_e_visible
-            || (hud_deconv_h_intensity - 1.0).abs() > 0.001
-            || (hud_deconv_e_intensity - 1.0).abs() > 0.001
-        {
-            let isolated = match hud_deconv_isolated {
-                crate::state::IsolatedChannel::None => 0u8,
-                crate::state::IsolatedChannel::Hematoxylin => 1u8,
-                crate::state::IsolatedChannel::Eosin => 2u8,
-            };
-            let params = crate::stain::build_deconv_params(
-                hud_deconv_h_intensity,
-                hud_deconv_h_visible,
-                hud_deconv_e_intensity,
-                hud_deconv_e_visible,
-                isolated,
-                stain_params.as_ref(),
-            );
-            if params.enabled { Some(params) } else { None }
-        } else {
-            None
         };
 
         let job_id = pool.next_job_id();
@@ -2009,14 +2018,7 @@ fn render_pane_to_image(
             background_rgba: [30, 30, 30, 255],
             fallback_blits: fallback_commands,
             fine_blits: fine_commands,
-            postprocess: CpuRenderPostProcess {
-                stain_params: if is_moving { None } else { stain_params },
-                deconv_params,
-                sharpness: if is_moving { 0.0 } else { hud_sharpness },
-                gamma: hud_gamma,
-                brightness: hud_brightness,
-                contrast: hud_contrast,
-            },
+            postprocess,
             settled_quality: !is_moving,
         });
 
@@ -2050,6 +2052,7 @@ fn render_cached_preview(
     render_height: u32,
     fallback_commands: &[CpuBlitCommand],
     fine_commands: &[CpuBlitCommand],
+    postprocess: &CpuRenderPostProcess,
 ) -> Option<Image> {
     crate::with_pane_render_cache(pane.0 + 1, |cache| {
         let entry = cache.get_mut(pane.0)?;
@@ -2091,6 +2094,8 @@ fn render_cached_preview(
             render_height,
             fine_commands,
         );
+
+        crate::render_pool::apply_postprocess(preview, render_width, render_height, postprocess);
 
         blitter::create_image_buffer(preview, render_width, render_height).map(Image::from_rgba8)
     })

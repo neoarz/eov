@@ -270,6 +270,26 @@ fn render_job_into_buffer(
     job_is_current(latest_jobs, job.pane_index, job.job_id)
 }
 
+/// Apply post-processing effects to an RGBA pixel buffer.
+/// Used by both the async render job path and the synchronous preview path.
+pub fn apply_postprocess(buffer: &mut [u8], width: u32, height: u32, pp: &CpuRenderPostProcess) {
+    if let Some(ref params) = pp.stain_params {
+        stain::apply_stain_params_to_buffer(buffer, params);
+    }
+    if let Some(ref params) = pp.deconv_params {
+        stain::apply_color_deconvolution(buffer, params);
+    }
+    if pp.sharpness > 0.001 {
+        common::postprocess::apply_sharpening(buffer, width, height, pp.sharpness);
+    }
+    let has_adjustments = (pp.gamma - 1.0).abs() > 0.001
+        || pp.brightness.abs() > 0.001
+        || (pp.contrast - 1.0).abs() > 0.001;
+    if has_adjustments {
+        common::postprocess::apply_adjustments(buffer, pp.gamma, pp.brightness, pp.contrast);
+    }
+}
+
 fn draw_command_into_chunk(
     chunk: &mut [u8],
     width: u32,
