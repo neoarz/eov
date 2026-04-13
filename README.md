@@ -260,15 +260,17 @@ cargo build --bin eov --release
 
 ## Packaging
 
-Linux packaging assets live under `assets/linux/` and `packaging/`.
+Packaging assets live under `assets/` and `packaging/`.
 
 - AppImage is the first-class direct-download Linux artifact.
 - Flatpak support is included for sandboxed distribution.
+- macOS packaging is source-controlled via `packaging/macos/` and produces a bundled `.app` archive.
 - All built packages use the OpenSlide shared library and required runtime shared libraries into the AppDir/AppImage instead of statically linking them (pursuant to LGPL compliance).
 
 Current packaging entry points:
 
 - `./packaging/appimage/build.sh`
+- `./packaging/macos/build.sh`
 - `./packaging/flatpak/build.sh`
 
 ## Repository Layout
