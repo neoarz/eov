@@ -7,10 +7,10 @@ use crate::{
     AppWindow, FilteringMode as SlintFilteringMode, MeasurementUnit as SlintMeasurementUnit,
     RenderMode, StainNormalization as SlintStainNormalization, ToolType, build_recent_menu_items,
     capture_pane_clipboard_image, copy_image_to_clipboard, copy_text_to_clipboard,
-    handle_tool_mouse_down, handle_tool_mouse_move, handle_tool_mouse_up, insert_pane_ui_state,
-    open_file, pane_from_index, refresh_tab_ui, request_render_loop, slider_value_to_zoom,
-    update_filtering_mode, update_render_backend, update_tabs, update_tool_overlays,
-    update_tool_state,
+    crop_image_to_viewport_bounds, handle_tool_mouse_down, handle_tool_mouse_move,
+    handle_tool_mouse_up, insert_pane_ui_state, open_file, pane_from_index, refresh_tab_ui,
+    request_render_loop, slider_value_to_zoom, update_filtering_mode, update_render_backend,
+    update_tabs, update_tool_overlays, update_tool_state,
 };
 use common::TileCache;
 use common::viewport::ZOOM_FACTOR;
@@ -453,6 +453,19 @@ pub fn setup_callbacks(
             match command.as_str() {
                 "viewport-copy-image" => {
                     if let Some(image) = capture_pane_clipboard_image(pane) {
+                        let viewport = {
+                            let state = state_handle.read();
+                            state
+                                .active_file_id_for_pane(pane)
+                                .and_then(|file_id| state.get_file(file_id))
+                                .and_then(|file| file.pane_state(pane))
+                                .map(|pane_state| pane_state.viewport.viewport.clone())
+                        };
+                        let image = if let Some(viewport) = viewport {
+                            crop_image_to_viewport_bounds(image, &viewport)
+                        } else {
+                            image
+                        };
                         if copy_image_to_clipboard(&clipboard, image) {
                             show_toast(&ui, &toast_timer, "Viewport image copied to clipboard.");
                         } else {
