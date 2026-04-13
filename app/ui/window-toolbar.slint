@@ -243,12 +243,13 @@ export component WindowToolbar inherits Rectangle {
             horizontal-stretch: 1;
         }
 
-        Text {
-            text: "eov";
-            color: Theme.text-secondary;
-            font-size: 12px;
-            font-weight: 600;
-            vertical-alignment: center;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("logo.png");
+                height: 20px;
+                image-fit: contain;
+            }
         }
 
         Rectangle {
