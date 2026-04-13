@@ -206,7 +206,7 @@ pub fn calculate_trilinear_levels(wsi: &WsiFile, target_downsample: f64) -> Tril
 }
 
 type CoarseBlendData = (Arc<common::TileData>, [f32; 2], [f32; 2], f32);
-type CpuBlitFn = fn(&mut [u8], u32, u32, &[u8], u32, u32, blitter::BlitRect);
+type CpuBlitFn = fn(&mut [u8], u32, u32, &[u8], u32, u32, u32, blitter::BlitRect);
 
 #[derive(Default)]
 struct PaneRenderOutcome {
@@ -826,6 +826,7 @@ fn render_pane_to_image(
                 &fallback_tile.data,
                 fallback_tile.width,
                 fallback_tile.height,
+                fallback_tile.border,
                 blitter::BlitRect {
                     x: *sx,
                     y: *sy,
@@ -850,6 +851,7 @@ fn render_pane_to_image(
                 &tile_data.data,
                 tile_data.width,
                 tile_data.height,
+                tile_data.border,
                 blitter::BlitRect {
                     x: screen_x,
                     y: screen_y,
@@ -886,6 +888,7 @@ fn render_pane_to_image(
                 &tile_data.data,
                 tile_data.width,
                 tile_data.height,
+                tile_data.border,
                 blitter::BlitRect {
                     x: screen_x,
                     y: screen_y,

@@ -402,6 +402,8 @@ struct QuadParams {
     fine_size: (u32, u32),
     coarse_size: (u32, u32),
     layer_size: u32,
+    fine_border: u32,
+    coarse_border: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -542,8 +544,9 @@ impl TileArray {
         }
         let layer = self.free_list.pop()?;
 
-        let width = tile.width.min(self.layer_size);
-        let height = tile.height.min(self.layer_size);
+        // Upload the full padded data (including border pixels).
+        let data_w = tile.data_width().min(self.layer_size);
+        let data_h = tile.data_height().min(self.layer_size);
 
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -559,12 +562,12 @@ impl TileArray {
             &tile.data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(tile.width * 4),
+                bytes_per_row: Some(tile.data_width() * 4),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
-                width,
-                height,
+                width: data_w,
+                height: data_h,
                 depth_or_array_layers: 1,
             },
         );
@@ -573,8 +576,8 @@ impl TileArray {
             tile.coord,
             TileSlot {
                 layer,
-                width,
-                height,
+                width: data_w,
+                height: data_h,
                 last_used_frame: frame_id,
             },
         );
@@ -1010,14 +1013,14 @@ impl GpuRenderer {
         for draw in &frame.draws {
             // Both fine and coarse tiles for a single draw must live in the
             // same texture array (the shader samples both from one binding).
-            // Use the larger of the two dimensions as the array key.
-            let fine_dim = draw.tile.width.max(draw.tile.height);
+            // Use the larger of the two padded dimensions as the array key.
+            let fine_dim = draw.tile.data_width().max(draw.tile.data_height());
             let coarse_dim = draw
                 .coarse_tile
                 .as_ref()
-                .map(|t| t.width.max(t.height))
+                .map(|t| t.data_width().max(t.data_height()))
                 .unwrap_or(0);
-            let array_ls = fine_dim.max(coarse_dim).next_power_of_two().max(64);
+            let array_ls = fine_dim.max(coarse_dim).max(64);
 
             // Lazily create the array for this layer size.
             let array = tile_arrays.entry(array_ls).or_insert_with(|| {
@@ -1066,6 +1069,12 @@ impl GpuRenderer {
                         fine_size: (fine_w, fine_h),
                         coarse_size: (coarse_w, coarse_h),
                         layer_size: array_ls,
+                        fine_border: draw.tile.border,
+                        coarse_border: draw
+                            .coarse_tile
+                            .as_ref()
+                            .map(|t| t.border)
+                            .unwrap_or(0),
                     },
                 ),
             });
@@ -1212,27 +1221,32 @@ fn quad_vertices(draw: &TileDraw, params: &QuadParams) -> [Vertex; 6] {
     let top = 1.0 - y0 / vh * 2.0;
     let bottom = 1.0 - y1 / vh * 2.0;
 
-    // Fine UV: map tile-space to array-space, inset by half a texel so the
-    // bilinear filter never samples beyond the tile's valid pixels into the
-    // stale padding region of the layer.
+    // Fine UV: map quad edges to the inner tile region within the padded
+    // texture.  With border > 0 the texture contains valid neighbor data so
+    // the bilinear/trilinear sampler naturally blends across tile edges.
     let ls = layer_size as f32;
-    let half = 0.5 / ls;
-    let fu_min = half;
-    let fv_min = half;
-    let fu_max = (fine_w as f32 - 0.5) / ls;
-    let fv_max = (fine_h as f32 - 0.5) / ls;
+    let fb = params.fine_border as f32;
+    let (fu_min, fv_min, fu_max, fv_max) = if fb > 0.0 {
+        // Inner tile spans texels [border .. border+inner_w) in the padded data.
+        (fb / ls, fb / ls, (fine_w as f32 - fb) / ls, (fine_h as f32 - fb) / ls)
+    } else {
+        // Legacy (border=0): half-texel inset to avoid sampling stale padding.
+        let half = 0.5 / ls;
+        (half, half, (fine_w as f32 - 0.5) / ls, (fine_h as f32 - 0.5) / ls)
+    };
 
-    // Coarse UV: the draw's coarse_uv_min/max are in [0,1] of the coarse tile;
-    // scale them to array-space the same way.
-    let cu_scale = coarse_w as f32 / ls;
-    let cv_scale = coarse_h as f32 / ls;
+    // Coarse UV: the draw's coarse_uv_min/max are in [0,1] of the coarse
+    // tile's inner region.  Map them to array-space accounting for border.
+    let cb = params.coarse_border as f32;
+    let coarse_inner_w = coarse_w as f32 - 2.0 * cb;
+    let coarse_inner_h = coarse_h as f32 - 2.0 * cb;
     let coarse_min = [
-        draw.coarse_uv_min[0] * cu_scale,
-        draw.coarse_uv_min[1] * cv_scale,
+        (cb + draw.coarse_uv_min[0] * coarse_inner_w) / ls,
+        (cb + draw.coarse_uv_min[1] * coarse_inner_h) / ls,
     ];
     let coarse_max = [
-        draw.coarse_uv_max[0] * cu_scale,
-        draw.coarse_uv_max[1] * cv_scale,
+        (cb + draw.coarse_uv_max[0] * coarse_inner_w) / ls,
+        (cb + draw.coarse_uv_max[1] * coarse_inner_h) / ls,
     ];
 
     let mip_blend = draw.mip_blend;

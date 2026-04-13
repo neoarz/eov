@@ -48,7 +48,12 @@ pub fn fast_fill_rgba(buffer: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
 }
 
 /// Optimized bilinear tile blitter with cache-friendly access patterns
-/// Uses fixed-point arithmetic and minimizes bounds checking
+/// Uses fixed-point arithmetic and minimizes bounds checking.
+///
+/// `border`: number of padding pixels on each side of the source data.
+/// When border > 0, `src` is `(src_width + 2*border) × (src_height + 2*border) × 4`
+/// bytes and the bilinear filter can sample the border region at tile edges,
+/// eliminating visible seams between adjacent tiles.
 #[inline(always)]
 pub fn blit_tile(
     dest: &mut [u8],
@@ -57,6 +62,7 @@ pub fn blit_tile(
     src: &[u8],
     src_width: u32,
     src_height: u32,
+    border: u32,
     rect: BlitRect,
 ) {
     let BlitRect {
@@ -89,12 +95,13 @@ pub fn blit_tile(
     // Bilinear interpolation with zero fractional parts is equivalent to
     // direct copy, so row-by-row memcpy produces identical output.
     if scaled_width == src_width as i32 && scaled_height == src_height as i32 {
+        let data_width = (src_width + 2 * border) as usize;
         let dest_stride = (dest_width * 4) as usize;
-        let src_stride = (src_width * 4) as usize;
+        let src_stride = data_width * 4;
         let copy_width = (end_x - start_x) as usize * 4;
-        let src_x_offset = (start_x as i32 - dest_x) as usize * 4;
+        let src_x_offset = (start_x as i32 - dest_x) as usize * 4 + border as usize * 4;
         for y in start_y..end_y {
-            let src_y = (y as i32 - dest_y) as usize;
+            let src_y = (y as i32 - dest_y) as usize + border as usize;
             let src_off = src_y * src_stride + src_x_offset;
             let dest_off = y as usize * dest_stride + start_x as usize * 4;
             if src_off + copy_width <= src.len() && dest_off + copy_width <= dest.len() {
@@ -105,15 +112,18 @@ pub fn blit_tile(
         return;
     }
 
+    let data_width = src_width + 2 * border;
+    let data_height = src_height + 2 * border;
+    let data_w_minus_1 = data_width.saturating_sub(1);
+    let data_h_minus_1 = data_height.saturating_sub(1);
+
     let scale_x_fp = ((src_width as u64) << 16) / (scaled_width as u64).max(1);
     let scale_y_fp = ((src_height as u64) << 16) / (scaled_height as u64).max(1);
 
-    let src_width_minus_1 = src_width.saturating_sub(1);
-    let src_height_minus_1 = src_height.saturating_sub(1);
     let dest_stride = (dest_width * 4) as usize;
-    let src_stride = (src_width * 4) as usize;
+    let src_stride = (data_width * 4) as usize;
 
-    let src_max_idx = src_height_minus_1 as usize * src_stride + src_width_minus_1 as usize * 4 + 3;
+    let src_max_idx = data_h_minus_1 as usize * src_stride + data_w_minus_1 as usize * 4 + 3;
     if src.len() <= src_max_idx {
         return;
     }
@@ -126,10 +136,12 @@ pub fn blit_tile(
     for y in start_y..end_y {
         let local_y = (y as i32 - dest_y) as u64;
         let src_y_fp = (local_y * scale_y_fp) as u32;
-        let y0 = (src_y_fp >> 16).min(src_height_minus_1);
-        let y1 = (y0 + 1).min(src_height_minus_1);
+        let y0_inner = src_y_fp >> 16;
         let fy = (src_y_fp & 0xFFFF) >> 8;
         let inv_fy = 256 - fy;
+        // Offset by border into the padded data; clamp to data bounds.
+        let y0 = (y0_inner + border).min(data_h_minus_1);
+        let y1 = (y0_inner + border + 1).min(data_h_minus_1);
 
         let dest_row = y as usize * dest_stride;
         let src_row0 = y0 as usize * src_stride;
@@ -138,10 +150,11 @@ pub fn blit_tile(
         for x in start_x..end_x {
             let local_x = (x as i32 - dest_x) as u64;
             let src_x_fp = (local_x * scale_x_fp) as u32;
-            let x0 = (src_x_fp >> 16).min(src_width_minus_1);
-            let x1 = (x0 + 1).min(src_width_minus_1);
+            let x0_inner = src_x_fp >> 16;
             let fx = (src_x_fp & 0xFFFF) >> 8;
             let inv_fx = 256 - fx;
+            let x0 = (x0_inner + border).min(data_w_minus_1);
+            let x1 = (x0_inner + border + 1).min(data_w_minus_1);
 
             let x0_4 = x0 as usize * 4;
             let x1_4 = x1 as usize * 4;
@@ -207,6 +220,7 @@ pub fn blit_tile_lanczos3(
     src: &[u8],
     src_width: u32,
     src_height: u32,
+    border: u32,
     rect: BlitRect,
 ) {
     let BlitRect {
@@ -235,12 +249,13 @@ pub fn blit_tile_lanczos3(
 
     // 1:1 fast path
     if scaled_width == src_width as i32 && scaled_height == src_height as i32 {
+        let data_width = (src_width + 2 * border) as usize;
         let dest_stride = (dest_width * 4) as usize;
-        let src_stride = (src_width * 4) as usize;
+        let src_stride = data_width * 4;
         let copy_width = (end_x - start_x) as usize * 4;
-        let src_x_offset = (start_x as i32 - dest_x) as usize * 4;
+        let src_x_offset = (start_x as i32 - dest_x) as usize * 4 + border as usize * 4;
         for y in start_y..end_y {
-            let src_y = (y as i32 - dest_y) as usize;
+            let src_y = (y as i32 - dest_y) as usize + border as usize;
             let src_off = src_y * src_stride + src_x_offset;
             let dest_off = y as usize * dest_stride + start_x as usize * 4;
             if src_off + copy_width <= src.len() && dest_off + copy_width <= dest.len() {
@@ -251,12 +266,16 @@ pub fn blit_tile_lanczos3(
         return;
     }
 
+    let data_width = src_width + 2 * border;
+    let data_height = src_height + 2 * border;
+
     let scale_x = src_width as f64 / scaled_width.max(1) as f64;
     let scale_y = src_height as f64 / scaled_height.max(1) as f64;
     let dest_stride = (dest_width * 4) as usize;
-    let src_stride = (src_width * 4) as usize;
-    let src_w = src_width as i32;
-    let src_h = src_height as i32;
+    let src_stride = (data_width * 4) as usize;
+    let data_w = data_width as i32;
+    let data_h = data_height as i32;
+    let b = border as i32;
     let a = 3.0_f64;
 
     for y in start_y..end_y {
@@ -275,23 +294,23 @@ pub fn blit_tile_lanczos3(
 
             let mut r = 0.0_f64;
             let mut g = 0.0_f64;
-            let mut b = 0.0_f64;
+            let mut bl = 0.0_f64;
             let mut aa = 0.0_f64;
             let mut w_sum = 0.0_f64;
 
             for j in -2..=3_i32 {
-                let sy = (center_y + j).clamp(0, src_h - 1) as usize;
+                let sy = (center_y + j + b).clamp(0, data_h - 1) as usize;
                 let wy = lanczos_weight(j as f64 - frac_y, a);
                 let row = sy * src_stride;
                 for i in -2..=3_i32 {
-                    let sx = (center_x + i).clamp(0, src_w - 1) as usize;
+                    let sx = (center_x + i + b).clamp(0, data_w - 1) as usize;
                     let wx = lanczos_weight(i as f64 - frac_x, a);
                     let w = wx * wy;
                     let idx = row + sx * 4;
                     if idx + 3 < src.len() {
                         r += src[idx] as f64 * w;
                         g += src[idx + 1] as f64 * w;
-                        b += src[idx + 2] as f64 * w;
+                        bl += src[idx + 2] as f64 * w;
                         aa += src[idx + 3] as f64 * w;
                         w_sum += w;
                     }
@@ -302,7 +321,7 @@ pub fn blit_tile_lanczos3(
             if dest_idx + 3 < dest.len() && w_sum.abs() > 1e-8 {
                 dest[dest_idx] = (r / w_sum).clamp(0.0, 255.0) as u8;
                 dest[dest_idx + 1] = (g / w_sum).clamp(0.0, 255.0) as u8;
-                dest[dest_idx + 2] = (b / w_sum).clamp(0.0, 255.0) as u8;
+                dest[dest_idx + 2] = (bl / w_sum).clamp(0.0, 255.0) as u8;
                 dest[dest_idx + 3] = (aa / w_sum).clamp(0.0, 255.0) as u8;
             }
         }

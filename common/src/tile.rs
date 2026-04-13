@@ -6,6 +6,88 @@
 use crate::{Error, Result, WsiFile};
 use tracing::trace;
 
+/// Build a uniformly-bordered RGBA buffer from an expanded-region read.
+///
+/// The read data has variable border amounts on each side (limited by image
+/// bounds).  This function copies it into a buffer that always has exactly
+/// `border` pixels on every side, edge-clamping where the image boundary
+/// prevented reading real neighbor data.
+fn create_bordered_tile(
+    read_data: &[u8],
+    read_w: u32,
+    read_h: u32,
+    inner_w: u32,
+    inner_h: u32,
+    border: u32,
+    avail_left: u32,
+    avail_top: u32,
+) -> Vec<u8> {
+    let out_w = (inner_w + 2 * border) as usize;
+    let out_h = (inner_h + 2 * border) as usize;
+    let dst_stride = out_w * 4;
+    let src_stride = read_w as usize * 4;
+    let mut out = vec![0u8; out_h * dst_stride];
+
+    // Offset in the output where the read data is placed.
+    let dx = (border - avail_left) as usize;
+    let dy = (border - avail_top) as usize;
+
+    // Step 1: copy the read data into the output buffer.
+    for y in 0..read_h as usize {
+        let src_off = y * src_stride;
+        let dst_off = (dy + y) * dst_stride + dx * 4;
+        out[dst_off..dst_off + src_stride]
+            .copy_from_slice(&read_data[src_off..src_off + src_stride]);
+    }
+
+    // Step 2: fill missing left-border columns by replicating the first
+    // available column in each row that has data.
+    if dx > 0 {
+        for iy in dy..dy + read_h as usize {
+            let src_off = iy * dst_stride + dx * 4;
+            let pixel = [out[src_off], out[src_off + 1], out[src_off + 2], out[src_off + 3]];
+            for ix in 0..dx {
+                let off = iy * dst_stride + ix * 4;
+                out[off..off + 4].copy_from_slice(&pixel);
+            }
+        }
+    }
+
+    // Step 3: fill missing right-border columns.
+    let right_data_end = dx + read_w as usize;
+    if right_data_end < out_w {
+        for iy in dy..dy + read_h as usize {
+            let src_off = iy * dst_stride + (right_data_end - 1) * 4;
+            let pixel = [out[src_off], out[src_off + 1], out[src_off + 2], out[src_off + 3]];
+            for ix in right_data_end..out_w {
+                let off = iy * dst_stride + ix * 4;
+                out[off..off + 4].copy_from_slice(&pixel);
+            }
+        }
+    }
+
+    // Step 4: fill missing top-border rows (copies full rows including L/R borders).
+    if dy > 0 {
+        let src_row_start = dy * dst_stride;
+        for iy in 0..dy {
+            let dst_row_start = iy * dst_stride;
+            out.copy_within(src_row_start..src_row_start + dst_stride, dst_row_start);
+        }
+    }
+
+    // Step 5: fill missing bottom-border rows.
+    let bottom_data_end = dy + read_h as usize;
+    if bottom_data_end < out_h {
+        let src_row_start = (bottom_data_end - 1) * dst_stride;
+        for iy in bottom_data_end..out_h {
+            let dst_row_start = iy * dst_stride;
+            out.copy_within(src_row_start..src_row_start + dst_stride, dst_row_start);
+        }
+    }
+
+    out
+}
+
 /// Tile coordinate identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileCoord {
@@ -38,23 +120,39 @@ impl TileCoord {
 pub struct TileData {
     /// Tile coordinate
     pub coord: TileCoord,
-    /// RGBA pixel data (width * height * 4 bytes)
+    /// RGBA pixel data — layout is data_width() × data_height() × 4 bytes.
     pub data: Vec<u8>,
-    /// Actual tile width (may be smaller at edges)
+    /// Inner tile width (content, excluding border padding)
     pub width: u32,
-    /// Actual tile height (may be smaller at edges)
+    /// Inner tile height (content, excluding border padding)
     pub height: u32,
+    /// Border padding in pixels on each side (0 = legacy, 1 = standard).
+    /// When border > 0, `data` is `(width + 2*border) × (height + 2*border) × 4` bytes.
+    pub border: u32,
 }
 
 impl TileData {
     /// Create a new tile data instance
-    pub fn new(coord: TileCoord, data: Vec<u8>, width: u32, height: u32) -> Self {
+    pub fn new(coord: TileCoord, data: Vec<u8>, width: u32, height: u32, border: u32) -> Self {
         Self {
             coord,
             data,
             width,
             height,
+            border,
         }
+    }
+
+    /// Full data width including border padding on both sides.
+    #[inline]
+    pub fn data_width(&self) -> u32 {
+        self.width + 2 * self.border
+    }
+
+    /// Full data height including border padding on both sides.
+    #[inline]
+    pub fn data_height(&self) -> u32 {
+        self.height + 2 * self.border
     }
 
     /// Create a placeholder tile (checkerboard pattern for debugging)
@@ -79,6 +177,7 @@ impl TileData {
             data,
             width: tile_size,
             height: tile_size,
+            border: 0,
         }
     }
 }
@@ -141,23 +240,24 @@ impl TileManager {
         &self.wsi
     }
 
-    /// Load a tile synchronously
+    /// Load a tile synchronously with a 1-pixel overlap border for seamless
+    /// bilinear/Lanczos filtering at tile boundaries.
     pub fn load_tile_sync(&self, coord: TileCoord) -> Result<TileData> {
         let level_info = self
             .wsi
             .level(coord.level)
             .ok_or(Error::InvalidLevel(coord.level, self.wsi.level_count() - 1))?;
 
-        // Calculate actual tile dimensions (may be smaller at edges)
+        // Inner tile bounds in level coordinates
         let tile_start_x = coord.x * coord.tile_size as u64;
         let tile_start_y = coord.y * coord.tile_size as u64;
 
-        let actual_width =
+        let inner_w =
             (level_info.width.saturating_sub(tile_start_x)).min(coord.tile_size as u64) as u32;
-        let actual_height =
+        let inner_h =
             (level_info.height.saturating_sub(tile_start_y)).min(coord.tile_size as u64) as u32;
 
-        if actual_width == 0 || actual_height == 0 {
+        if inner_w == 0 || inner_h == 0 {
             return Err(Error::InvalidCoordinates {
                 x: coord.x as i64,
                 y: coord.y as i64,
@@ -166,15 +266,52 @@ impl TileManager {
         }
 
         trace!(
-            "Loading tile {:?}, actual size: {}x{}",
-            coord, actual_width, actual_height
+            "Loading tile {:?}, inner size: {}x{}",
+            coord, inner_w, inner_h
         );
 
-        let data = self
-            .wsi
-            .read_tile_with_size(coord.level, coord.x, coord.y, coord.tile_size)?;
+        const BORDER: u32 = 1;
 
-        Ok(TileData::new(coord, data, actual_width, actual_height))
+        // Compute how many border pixels are available on each side
+        // (clamped to image bounds at this level).
+        let avail_left = tile_start_x.min(BORDER as u64) as u32;
+        let avail_top = tile_start_y.min(BORDER as u64) as u32;
+        let avail_right = (level_info
+            .width
+            .saturating_sub(tile_start_x + inner_w as u64))
+        .min(BORDER as u64) as u32;
+        let avail_bottom = (level_info
+            .height
+            .saturating_sub(tile_start_y + inner_h as u64))
+        .min(BORDER as u64) as u32;
+
+        // Expanded read region
+        let read_x = tile_start_x - avail_left as u64;
+        let read_y = tile_start_y - avail_top as u64;
+        let read_w = avail_left + inner_w + avail_right;
+        let read_h = avail_top + inner_h + avail_bottom;
+
+        // Convert to level-0 coordinates for read_region
+        let read_x0 = (read_x as f64 * level_info.downsample) as i64;
+        let read_y0 = (read_y as f64 * level_info.downsample) as i64;
+
+        let read_data =
+            self.wsi
+                .read_region(read_x0, read_y0, coord.level, read_w, read_h)?;
+
+        // Build the uniformly-bordered output buffer.
+        let data = create_bordered_tile(
+            &read_data,
+            read_w,
+            read_h,
+            inner_w,
+            inner_h,
+            BORDER,
+            avail_left,
+            avail_top,
+        );
+
+        Ok(TileData::new(coord, data, inner_w, inner_h, BORDER))
     }
 
     /// Calculate visible tiles for a given viewport
