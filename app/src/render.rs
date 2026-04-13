@@ -791,31 +791,7 @@ fn render_pane_to_image(
         }
     }
 
-    // Build a coarse-tile lookup for fused trilinear blitting.
-    // Maps (tile_x, tile_y) → Arc<TileData> for the coarse level so
-    // per-fine-tile blits can find their coarse counterpart in O(1).
-    let coarse_tile_map: HashMap<(u64, u64), Arc<common::TileData>> = cached_coarse_tiles
-        .iter()
-        .map(|(coord, data)| ((coord.x, coord.y), Arc::clone(data)))
-        .collect();
-
-    let coarse_info_opt = if use_trilinear_blend
-        && trilinear.level_fine != trilinear.level_coarse
-        && trilinear.blend > 0.01
-    {
-        file.wsi.level(trilinear.level_coarse).cloned()
-    } else {
-        None
-    };
-
-    let coarse_tile_size = if coarse_info_opt.is_some() {
-        file.tile_manager
-            .tile_size_for_level(trilinear.level_coarse) as f64
-    } else {
-        0.0
-    };
-
-    let Some(_pane_state) = file.pane_state_mut(pane) else {
+    let Some(_) = file.pane_state(pane) else {
         return PaneRenderOutcome::default();
     };
     // Render directly into SharedPixelBuffer to avoid an intermediate copy.
@@ -846,32 +822,33 @@ fn render_pane_to_image(
         || (is_adaptive_lanczos && effective_lanczos_weight < 1.0);
 
     // Helper: compute the BlitRect for a fine tile
-    let fine_blit_rect = |coord: &common::TileCoord, tile_data: &common::TileData| -> blitter::BlitRect {
-        let origin_x = coord.x as f64 * coord.tile_size as f64;
-        let origin_y = coord.y as f64 * coord.tile_size as f64;
-        let image_x = origin_x * level_info.downsample;
-        let image_y = origin_y * level_info.downsample;
-        let image_x_end = (origin_x + tile_data.width as f64) * level_info.downsample;
-        let image_y_end = (origin_y + tile_data.height as f64) * level_info.downsample;
-        let exact_sx = (image_x - bounds.left) * vp.zoom;
-        let exact_sy = (image_y - bounds.top) * vp.zoom;
-        let exact_sx_end = (image_x_end - bounds.left) * vp.zoom;
-        let exact_sy_end = (image_y_end - bounds.top) * vp.zoom;
-        let screen_x = exact_sx.floor() as i32;
-        let screen_y = exact_sy.floor() as i32;
-        let screen_x_end = exact_sx_end.floor() as i32;
-        let screen_y_end = exact_sy_end.floor() as i32;
-        blitter::BlitRect {
-            x: screen_x,
-            y: screen_y,
-            width: screen_x_end - screen_x,
-            height: screen_y_end - screen_y,
-            exact_x: exact_sx,
-            exact_y: exact_sy,
-            exact_width: exact_sx_end - exact_sx,
-            exact_height: exact_sy_end - exact_sy,
-        }
-    };
+    let fine_blit_rect =
+        |coord: &common::TileCoord, tile_data: &common::TileData| -> blitter::BlitRect {
+            let origin_x = coord.x as f64 * coord.tile_size as f64;
+            let origin_y = coord.y as f64 * coord.tile_size as f64;
+            let image_x = origin_x * level_info.downsample;
+            let image_y = origin_y * level_info.downsample;
+            let image_x_end = (origin_x + tile_data.width as f64) * level_info.downsample;
+            let image_y_end = (origin_y + tile_data.height as f64) * level_info.downsample;
+            let exact_sx = (image_x - bounds.left) * vp.zoom;
+            let exact_sy = (image_y - bounds.top) * vp.zoom;
+            let exact_sx_end = (image_x_end - bounds.left) * vp.zoom;
+            let exact_sy_end = (image_y_end - bounds.top) * vp.zoom;
+            let screen_x = exact_sx.floor() as i32;
+            let screen_y = exact_sy.floor() as i32;
+            let screen_x_end = exact_sx_end.floor() as i32;
+            let screen_y_end = exact_sy_end.floor() as i32;
+            blitter::BlitRect {
+                x: screen_x,
+                y: screen_y,
+                width: screen_x_end - screen_x,
+                height: screen_y_end - screen_y,
+                exact_x: exact_sx,
+                exact_y: exact_sy,
+                exact_width: exact_sx_end - exact_sx,
+                exact_height: exact_sy_end - exact_sy,
+            }
+        };
 
     // --- Blit fallback tiles (always bilinear, no trilinear) ---
     for (fallback_tile, rect) in &fallback_blits {
@@ -891,65 +868,46 @@ fn render_pane_to_image(
 
     // --- Blit fine tiles with optional fused trilinear ---
     let do_fused_trilinear = effective_trilinear
-        && coarse_info_opt.is_some()
+        && trilinear.level_fine != trilinear.level_coarse
         && trilinear.blend > 0.01
-        && !coarse_tile_map.is_empty();
+        && !cached_coarse_tiles.is_empty();
 
     for (coord, tile_data) in cached_tiles.iter() {
         let rect = fine_blit_rect(coord, tile_data);
 
         // Try fused trilinear path: find the matching coarse tile and blit both in one pass
-        if do_fused_trilinear {
-            if let Some(ref coarse_info) = coarse_info_opt {
-                let fine_ds = level_info.downsample;
-                let coarse_ds = coarse_info.downsample;
-                let image_x = coord.x as f64 * coord.tile_size as f64 * fine_ds;
-                let image_y = coord.y as f64 * coord.tile_size as f64 * fine_ds;
-                let fine_image_w = tile_data.width as f64 * fine_ds;
-                let fine_image_h = tile_data.height as f64 * fine_ds;
-                let coarse_tile_x = image_x / coarse_ds;
-                let coarse_tile_y = image_y / coarse_ds;
-                let ctx = (coarse_tile_x / coarse_tile_size).floor().max(0.0) as u64;
-                let cty = (coarse_tile_y / coarse_tile_size).floor().max(0.0) as u64;
-
-                if let Some(coarse_tile) = coarse_tile_map.get(&(ctx, cty)) {
-                    let coarse_origin_x = ctx as f64 * coarse_tile_size;
-                    let coarse_origin_y = cty as f64 * coarse_tile_size;
-                    let cu_min = ((coarse_tile_x - coarse_origin_x) / coarse_tile.width as f64)
-                        .clamp(0.0, 1.0) as f32;
-                    let cv_min = ((coarse_tile_y - coarse_origin_y) / coarse_tile.height as f64)
-                        .clamp(0.0, 1.0) as f32;
-                    let cu_max = (cu_min as f64
-                        + fine_image_w / coarse_ds / coarse_tile.width as f64)
-                        .clamp(0.0, 1.0) as f32;
-                    let cv_max = (cv_min as f64
-                        + fine_image_h / coarse_ds / coarse_tile.height as f64)
-                        .clamp(0.0, 1.0) as f32;
-
-                    blitter::blit_tile_trilinear(
-                        buffer,
-                        render_width,
-                        render_height,
-                        blitter::TileSrc {
-                            data: &tile_data.data,
-                            width: tile_data.width,
-                            height: tile_data.height,
-                            border: tile_data.border,
-                        },
-                        &blitter::CoarseSrc {
-                            data: &coarse_tile.data,
-                            width: coarse_tile.width,
-                            height: coarse_tile.height,
-                            border: coarse_tile.border,
-                            uv_min: [cu_min, cv_min],
-                            uv_max: [cu_max, cv_max],
-                            blend: trilinear.blend as f32,
-                        },
-                        rect,
-                    );
-                    continue;
-                }
-            }
+        if do_fused_trilinear
+            && let Some((coarse_tile, uv_min, uv_max, blend)) = coarse_blend_for_tile(
+                file,
+                tile_cache,
+                trilinear,
+                level_info.downsample,
+                *coord,
+                tile_data,
+            )
+        {
+            blitter::blit_tile_trilinear(
+                buffer,
+                render_width,
+                render_height,
+                blitter::TileSrc {
+                    data: &tile_data.data,
+                    width: tile_data.width,
+                    height: tile_data.height,
+                    border: tile_data.border,
+                },
+                &blitter::CoarseSrc {
+                    data: &coarse_tile.data,
+                    width: coarse_tile.width,
+                    height: coarse_tile.height,
+                    border: coarse_tile.border,
+                    uv_min,
+                    uv_max,
+                    blend,
+                },
+                rect,
+            );
+            continue;
         }
 
         // Non-trilinear path or no coarse tile found: use the selected filter
@@ -986,7 +944,9 @@ fn render_pane_to_image(
     let skip_expensive_postprocess = is_moving && render_backend == RenderBackend::Cpu;
 
     // Post-processing: apply stain normalization if enabled (cached)
-    if !skip_expensive_postprocess && hud_stain_normalization != crate::state::StainNormalization::None {
+    if !skip_expensive_postprocess
+        && hud_stain_normalization != crate::state::StainNormalization::None
+    {
         // Use cached stain params if the tile epoch and method haven't changed.
         let need_recompute = file
             .pane_state(pane)
@@ -1012,17 +972,24 @@ fn render_pane_to_image(
             }
         }
 
-        if let Some(ps) = file.pane_state(pane) {
-            if let Some(ref params) = ps.cached_stain_params {
-                crate::stain::apply_stain_params_to_buffer(buffer, params);
-            }
+        if let Some(ps) = file.pane_state(pane)
+            && let Some(ref params) = ps.cached_stain_params
+        {
+            crate::stain::apply_stain_params_to_buffer(buffer, params);
         }
     }
 
     // Post-processing: apply sharpening (unsharp mask) if enabled
     // Reuse scratch buffer to avoid per-frame allocation.
     if !skip_expensive_postprocess && hud_sharpness > 0.001 {
-        apply_sharpening_reuse(file, pane, buffer, render_width, render_height, hud_sharpness);
+        apply_sharpening_reuse(
+            file,
+            pane,
+            buffer,
+            render_width,
+            render_height,
+            hud_sharpness,
+        );
     }
 
     // Post-processing: apply gamma, brightness, contrast if they differ from defaults

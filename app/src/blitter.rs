@@ -480,8 +480,16 @@ pub fn blit_tile_trilinear(
     let use_exact = rect.exact_width > 0.0;
     let exact_x = rect.exact_x;
     let exact_y = rect.exact_y;
-    let exact_w = if use_exact { rect.exact_width } else { scaled_width as f64 };
-    let exact_h = if use_exact { rect.exact_height } else { scaled_height as f64 };
+    let exact_w = if use_exact {
+        rect.exact_width
+    } else {
+        scaled_width as f64
+    };
+    let exact_h = if use_exact {
+        rect.exact_height
+    } else {
+        scaled_height as f64
+    };
     let fine_sx = fine_w as f64 / exact_w;
     let fine_sy = fine_h as f64 / exact_h;
     let dest_stride = (dest_width * 4) as usize;
