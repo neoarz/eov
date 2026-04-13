@@ -27,9 +27,9 @@ use slint::{BackendSelector, Image, SharedString, Timer, TimerMode, VecModel};
 use state::{AppState, PaneId, RenderBackend};
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::sync::OnceLock;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::OnceLock;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -829,7 +829,7 @@ fn set_text_with_clipboard(clipboard: &mut arboard::Clipboard, text: String) -> 
             warn!("Failed to copy text to clipboard: {}", err);
             return false;
         }
-        return true;
+        true
     }
 
     #[cfg(not(all(
@@ -863,7 +863,7 @@ fn set_image_with_clipboard(clipboard: &mut arboard::Clipboard, image: PaneClipb
             warn!("Failed to copy image to clipboard: {}", err);
             return false;
         }
-        return true;
+        true
     }
 
     #[cfg(not(all(
@@ -952,17 +952,20 @@ pub(crate) fn crop_image_to_viewport_bounds(
     let scale_x = image.width as f64 / viewport.width.max(1.0);
     let scale_y = image.height as f64 / viewport.height.max(1.0);
 
-    let crop_left = (visible_left * scale_x).floor().clamp(0.0, image.width as f64) as usize;
-    let crop_top = (visible_top * scale_y).floor().clamp(0.0, image.height as f64) as usize;
-    let crop_right = (visible_right * scale_x).ceil().clamp(0.0, image.width as f64) as usize;
-    let crop_bottom =
-        (visible_bottom * scale_y).ceil().clamp(0.0, image.height as f64) as usize;
+    let crop_left = (visible_left * scale_x)
+        .floor()
+        .clamp(0.0, image.width as f64) as usize;
+    let crop_top = (visible_top * scale_y)
+        .floor()
+        .clamp(0.0, image.height as f64) as usize;
+    let crop_right = (visible_right * scale_x)
+        .ceil()
+        .clamp(0.0, image.width as f64) as usize;
+    let crop_bottom = (visible_bottom * scale_y)
+        .ceil()
+        .clamp(0.0, image.height as f64) as usize;
 
-    if crop_left == 0
-        && crop_top == 0
-        && crop_right == image.width
-        && crop_bottom == image.height
-    {
+    if crop_left == 0 && crop_top == 0 && crop_right == image.width && crop_bottom == image.height {
         return image;
     }
 

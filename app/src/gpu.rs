@@ -965,8 +965,7 @@ impl GpuRenderer {
         let surface = runtime.surfaces.get(&slot.index())?;
 
         let bytes_per_row = surface.width.checked_mul(4)?;
-        let padded_bytes_per_row = bytes_per_row
-            .div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer_size = padded_bytes_per_row as u64 * surface.height as u64;
 

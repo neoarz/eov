@@ -271,7 +271,9 @@ fn zoom_active_viewport(state: &mut AppState, factor: f64) -> bool {
 }
 
 fn show_stub_viewport_action(ui: &AppWindow, label: &str) {
-    ui.set_status_text(SharedString::from(format!("{label} is not implemented yet")));
+    ui.set_status_text(SharedString::from(format!(
+        "{label} is not implemented yet"
+    )));
     info!(action = label, "viewport context menu stub invoked");
 }
 
@@ -1857,20 +1859,8 @@ pub fn setup_callbacks(
             let render_timer = Rc::clone(&render_timer);
 
             move |slint_window, event| match event {
-                winit::event::WindowEvent::Resized(physical_size) => {
-                    let current = slint_window.size();
-                    eprintln!(
-                        "[RESIZE] winit physical={}x{} slint={}x{} scale={}",
-                        physical_size.width,
-                        physical_size.height,
-                        current.width,
-                        current.height,
-                        slint_window.scale_factor()
-                    );
+                winit::event::WindowEvent::Resized(_physical_size) => {
                     if let Some(ui) = ui_weak.upgrade() {
-                        let cw = ui.get_content_area_width();
-                        let ch = ui.get_content_area_height();
-                        eprintln!("[RESIZE] content_area={}x{}", cw, ch);
                         request_render_loop(
                             &render_timer,
                             &ui.as_weak(),
