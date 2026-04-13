@@ -269,7 +269,7 @@ impl SurfaceSlot {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 struct AdjustmentsUniform {
     gamma: f32,
     brightness: f32,
@@ -314,10 +314,7 @@ impl QueuedFrame {
         self.draws.len().hash(&mut hasher);
         for draw in &self.draws {
             draw.tile.coord.hash(&mut hasher);
-            draw.coarse_tile
-                .as_ref()
-                .map(|t| t.coord)
-                .hash(&mut hasher);
+            draw.coarse_tile.as_ref().map(|t| t.coord).hash(&mut hasher);
             draw.screen_x.hash(&mut hasher);
             draw.screen_y.hash(&mut hasher);
             draw.screen_w.hash(&mut hasher);
@@ -589,6 +586,8 @@ pub struct GpuRenderer {
     /// Fingerprint of the last successfully rendered frame per slot.
     /// Used to skip redundant vertex rebuilds and render passes.
     last_rendered_fingerprint: HashMap<usize, u64>,
+    /// Last uploaded adjustments uniform, used to skip redundant uploads.
+    last_adjustments: Option<AdjustmentsUniform>,
 }
 
 impl GpuRenderer {
@@ -599,6 +598,7 @@ impl GpuRenderer {
             tile_arrays: HashMap::new(),
             frame_counter: 0,
             last_rendered_fingerprint: HashMap::new(),
+            last_adjustments: None,
         }
     }
 
@@ -839,6 +839,7 @@ impl GpuRenderer {
         self.pending_frames.clear();
         self.tile_arrays.clear();
         self.last_rendered_fingerprint.clear();
+        self.last_adjustments = None;
     }
 
     fn ensure_surface(&mut self, slot: SurfaceSlot, width: u32, height: u32) -> Option<bool> {
@@ -911,6 +912,7 @@ impl GpuRenderer {
                 Self::render_frame(
                     runtime,
                     &mut self.tile_arrays,
+                    &mut self.last_adjustments,
                     SurfaceSlot(slot_index),
                     frame,
                     frame_id,
@@ -927,6 +929,7 @@ impl GpuRenderer {
     fn render_frame(
         runtime: &mut GpuRuntime,
         tile_arrays: &mut HashMap<u32, TileArray>,
+        last_adjustments: &mut Option<AdjustmentsUniform>,
         slot: SurfaceSlot,
         frame: QueuedFrame,
         frame_id: u64,
@@ -1035,7 +1038,7 @@ impl GpuRenderer {
                 .write_buffer(&runtime.vertex_buffer, 0, bytemuck::cast_slice(&flat));
         }
 
-        // Upload adjustments uniform.
+        // Upload adjustments uniform only when values changed.
         let adj = AdjustmentsUniform {
             gamma: frame.gamma,
             brightness: frame.brightness,
@@ -1044,9 +1047,12 @@ impl GpuRenderer {
             inv_stain_r0: frame.inv_stain_r0,
             inv_stain_r1: frame.inv_stain_r1,
         };
-        runtime
-            .queue
-            .write_buffer(&runtime.adjustments_buffer, 0, bytemuck::bytes_of(&adj));
+        if last_adjustments.as_ref() != Some(&adj) {
+            runtime
+                .queue
+                .write_buffer(&runtime.adjustments_buffer, 0, bytemuck::bytes_of(&adj));
+            *last_adjustments = Some(adj);
+        }
 
         // Build draw ranges — batch consecutive quads that share the same
         // array so we can issue one `draw()` per contiguous run.
