@@ -151,6 +151,7 @@ export component AppWindow inherits Window {
     callback os-file-drop(/* pane */ int, /* side: -1=center, 0=left, 1=right */ int, /* path */ string);
     callback hud-toggle-scale-bar(int);
     callback hud-toggle-dropdown(int);
+    callback hud-sharpness-changed(int, float);
     callback hud-gamma-changed(int, float);
     callback hud-brightness-changed(int, float);
     callback hud-contrast-changed(int, float);
@@ -464,6 +465,9 @@ export component AppWindow inherits Window {
                 }
                 hud-toggle-dropdown(pane) => {
                     root.hud-toggle-dropdown(pane);
+                }
+                hud-sharpness-changed(pane, v) => {
+                    root.hud-sharpness-changed(pane, v);
                 }
                 hud-gamma-changed(pane, v) => {
                     root.hud-gamma-changed(pane, v);

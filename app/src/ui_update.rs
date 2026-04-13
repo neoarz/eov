@@ -458,6 +458,7 @@ fn ui_hud_settings(hud: &HudSettings, mpp_x: f32, mpp_y: f32) -> SlintHudSetting
         show_scale_bar: hud.show_scale_bar,
         show_hud_toolbar: hud.show_hud_toolbar,
         hud_dropdown_open: hud.hud_dropdown_open,
+        sharpness: hud.sharpness,
         gamma: hud.gamma,
         brightness: hud.brightness,
         contrast: hud.contrast,

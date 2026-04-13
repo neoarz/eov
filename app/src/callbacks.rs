@@ -1588,6 +1588,27 @@ pub fn setup_callbacks(
         let render_timer = Rc::clone(&render_timer);
         let ui_weak = ui_weak.clone();
 
+        ui.on_hud_sharpness_changed(move |pane, value| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if let Some(hud) = active_hud_mut(&mut state) {
+                    hud.sharpness = value;
+                }
+                state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
         ui.on_hud_brightness_changed(move |pane, value| {
             {
                 let mut state = state_handle.write();

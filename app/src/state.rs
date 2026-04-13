@@ -59,6 +59,7 @@ pub struct HudSettings {
     pub show_scale_bar: bool,
     pub show_hud_toolbar: bool,
     pub hud_dropdown_open: bool,
+    pub sharpness: f32,
     pub gamma: f32,
     pub brightness: f32,
     pub contrast: f32,
@@ -72,6 +73,7 @@ impl Default for HudSettings {
             show_scale_bar: true,
             show_hud_toolbar: true,
             hud_dropdown_open: false,
+            sharpness: 0.0,
             gamma: 1.0,
             brightness: 0.0,
             contrast: 1.0,
@@ -83,6 +85,7 @@ impl Default for HudSettings {
 
 impl HudSettings {
     pub fn reset_adjustments(&mut self) {
+        self.sharpness = 0.0;
         self.gamma = 1.0;
         self.brightness = 0.0;
         self.contrast = 1.0;
@@ -344,6 +347,7 @@ pub struct FilePaneState {
     pub last_render_gamma: f32,
     pub last_render_brightness: f32,
     pub last_render_contrast: f32,
+    pub last_render_sharpness: f32,
     pub last_render_stain_normalization: StainNormalization,
     pub hud: HudSettings,
 }
@@ -366,6 +370,7 @@ impl FilePaneState {
             last_render_gamma: 1.0,
             last_render_brightness: 0.0,
             last_render_contrast: 1.0,
+            last_render_sharpness: 0.0,
             last_render_stain_normalization: StainNormalization::None,
             hud: HudSettings::default(),
         }

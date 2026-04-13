@@ -83,6 +83,7 @@ component HudSlider inherits Rectangle {
 }
 
 export component HudSettingsPanel inherits Rectangle {
+    in property <float> sharpness: 0.0;
     in property <float> gamma: 1.0;
     in property <float> brightness: 0.0;
     in property <float> contrast: 1.0;
@@ -90,6 +91,7 @@ export component HudSettingsPanel inherits Rectangle {
     in property <StainNormalization> stain-normalization: StainNormalization.none;
     in property <bool> has-adjustments: false;
 
+    callback sharpness-changed(float);
     callback gamma-changed(float);
     callback brightness-changed(float);
     callback contrast-changed(float);
@@ -121,6 +123,22 @@ export component HudSettingsPanel inherits Rectangle {
                 font-size: 11px;
                 font-weight: 700;
                 vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: #ffffff12;
+        }
+
+        HudSlider {
+            label: "Sharpness";
+            value: root.sharpness;
+            min-value: 0.0;
+            max-value: 1.0;
+            display-text: Math.round(root.sharpness * 100) + "%";
+            changed(v) => {
+                root.sharpness-changed(v);
             }
         }
 

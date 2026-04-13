@@ -61,6 +61,43 @@ fn apply_adjustments(buffer: &mut [u8], gamma: f32, brightness: f32, contrast: f
     }
 }
 
+/// Apply unsharp-mask sharpening to an RGBA pixel buffer in-place.
+///
+/// Uses a 3×3 Laplacian (4-connected) kernel — the standard single-pass
+/// unsharp mask widely used in digital histology image processing.
+///
+/// `sharpness` in [0, 1]: 0 = bypass, 1 = maximum sharpening.
+fn apply_sharpening(buffer: &mut [u8], width: u32, height: u32, sharpness: f32) {
+    let w = width as usize;
+    let h = height as usize;
+    if w < 3 || h < 3 {
+        return;
+    }
+    let stride = w * 4;
+    // Work on a copy to read original values while writing sharpened output.
+    let src = buffer.to_vec();
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let idx = y * stride + x * 4;
+            let n = idx - stride; // (x, y-1)
+            let s = idx + stride; // (x, y+1)
+            let we = idx - 4; // (x-1, y)
+            let e = idx + 4; // (x+1, y)
+            for c in 0..3 {
+                let center = src[idx + c] as f32;
+                let neighbors = src[n + c] as f32
+                    + src[s + c] as f32
+                    + src[we + c] as f32
+                    + src[e + c] as f32;
+                // Laplacian detail = 4*center - sum(neighbors)
+                let detail = center * 4.0 - neighbors;
+                let sharpened = center + sharpness * detail;
+                buffer[idx + c] = sharpened.clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+}
+
 /// Result of trilinear level calculation
 #[derive(Debug, Clone, Copy)]
 pub struct TrilinearLevels {
@@ -464,10 +501,12 @@ fn render_pane_to_image(
         last_render_level,
         previous_tiles_loaded,
         last_seen_tile_epoch,
+        hud_sharpness,
         hud_gamma,
         hud_brightness,
         hud_contrast,
         hud_stain_normalization,
+        last_render_sharpness,
         last_render_gamma,
         last_render_brightness,
         last_render_contrast,
@@ -491,10 +530,12 @@ fn render_pane_to_image(
             pane_state.last_render_level,
             pane_state.tiles_loaded_since_render,
             pane_state.last_seen_tile_epoch,
+            pane_state.hud.sharpness,
             pane_state.hud.gamma,
             pane_state.hud.brightness,
             pane_state.hud.contrast,
             pane_state.hud.stain_normalization,
+            pane_state.last_render_sharpness,
             pane_state.last_render_gamma,
             pane_state.last_render_brightness,
             pane_state.last_render_contrast,
@@ -600,7 +641,8 @@ fn render_pane_to_image(
         );
     }
 
-    let adjustments_changed = (hud_gamma - last_render_gamma).abs() > 0.001
+    let adjustments_changed = (hud_sharpness - last_render_sharpness).abs() > 0.001
+        || (hud_gamma - last_render_gamma).abs() > 0.001
         || (hud_brightness - last_render_brightness).abs() > 0.001
         || (hud_contrast - last_render_contrast).abs() > 0.001
         || hud_stain_normalization != last_render_stain_normalization;
@@ -633,6 +675,7 @@ fn render_pane_to_image(
         pane_state.last_render_gamma = hud_gamma;
         pane_state.last_render_brightness = hud_brightness;
         pane_state.last_render_contrast = hud_contrast;
+        pane_state.last_render_sharpness = hud_sharpness;
         pane_state.last_render_stain_normalization = hud_stain_normalization;
     }
 
@@ -680,6 +723,7 @@ fn render_pane_to_image(
                     gamma: hud_gamma,
                     brightness: hud_brightness,
                     contrast: hud_contrast,
+                    sharpness: hud_sharpness,
                     stain_norm_enabled: stain_params.enabled,
                     inv_stain_r0: stain_params.inv_stain_r0,
                     inv_stain_r1: stain_params.inv_stain_r1,
@@ -890,6 +934,11 @@ fn render_pane_to_image(
         .chain(fallback_blits.iter().map(|(td, ..)| td.data.as_slice()))
         .collect();
     crate::stain::normalize_buffer(buffer, hud_stain_normalization, &tile_slices);
+
+    // Post-processing: apply sharpening (unsharp mask) if enabled
+    if hud_sharpness > 0.001 {
+        apply_sharpening(buffer, render_width, render_height, hud_sharpness);
+    }
 
     // Post-processing: apply gamma, brightness, contrast if they differ from defaults
     let has_adjustments = (hud_gamma - 1.0).abs() > 0.001

@@ -52,6 +52,7 @@ export component Viewport inherits Rectangle {
     callback close-tab();
     callback hud-toggle-scale-bar();
     callback hud-toggle-dropdown();
+    callback hud-sharpness-changed(float);
     callback hud-gamma-changed(float);
     callback hud-brightness-changed(float);
     callback hud-contrast-changed(float);
@@ -444,7 +445,7 @@ export component Viewport inherits Rectangle {
         zoom-level: root.viewport-info.zoom;
         show-scale-bar: root.hud.show-scale-bar;
         dropdown-open: root.hud.hud-dropdown-open;
-        has-adjustments: (root.hud.gamma - 1.0) > 0.01 || (1.0 - root.hud.gamma) > 0.01 || root.hud.brightness > 0.01 || root.hud.brightness < -0.01 || (root.hud.contrast - 1.0) > 0.01 || (1.0 - root.hud.contrast) > 0.01;
+        has-adjustments: root.hud.sharpness > 0.01 || (root.hud.gamma - 1.0) > 0.01 || (1.0 - root.hud.gamma) > 0.01 || root.hud.brightness > 0.01 || root.hud.brightness < -0.01 || (root.hud.contrast - 1.0) > 0.01 || (1.0 - root.hud.contrast) > 0.01;
         fit-to-view => {
             root.fit-to-view();
         }
@@ -463,12 +464,16 @@ export component Viewport inherits Rectangle {
     if root.hud.show-hud-toolbar && root.hud.hud-dropdown-open: HudSettingsPanel {
         x: 16px;
         y: 60px;
+        sharpness: root.hud.sharpness;
         gamma: root.hud.gamma;
         brightness: root.hud.brightness;
         contrast: root.hud.contrast;
         measurement-unit: root.hud.measurement-unit;
         stain-normalization: root.hud.stain-normalization;
-        has-adjustments: (root.hud.gamma - 1.0) > 0.01 || (1.0 - root.hud.gamma) > 0.01 || root.hud.brightness > 0.01 || root.hud.brightness < -0.01 || (root.hud.contrast - 1.0) > 0.01 || (1.0 - root.hud.contrast) > 0.01 || root.hud.stain-normalization != StainNormalization.none;
+        has-adjustments: root.hud.sharpness > 0.01 || (root.hud.gamma - 1.0) > 0.01 || (1.0 - root.hud.gamma) > 0.01 || root.hud.brightness > 0.01 || root.hud.brightness < -0.01 || (root.hud.contrast - 1.0) > 0.01 || (1.0 - root.hud.contrast) > 0.01 || root.hud.stain-normalization != StainNormalization.none;
+        sharpness-changed(v) => {
+            root.hud-sharpness-changed(v);
+        }
         gamma-changed(v) => {
             root.hud-gamma-changed(v);
         }

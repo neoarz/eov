@@ -55,6 +55,7 @@ component PaneView inherits Rectangle {
     callback tab-tooltip-changed(bool, string, length, length);
     callback hud-toggle-scale-bar(int);
     callback hud-toggle-dropdown(int);
+    callback hud-sharpness-changed(int, float);
     callback hud-gamma-changed(int, float);
     callback hud-brightness-changed(int, float);
     callback hud-contrast-changed(int, float);
@@ -191,6 +192,10 @@ component PaneView inherits Rectangle {
                 hud-toggle-dropdown => {
                     root.pane-focused(root.pane-data.id);
                     root.hud-toggle-dropdown(root.pane-data.id);
+                }
+                hud-sharpness-changed(v) => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-sharpness-changed(root.pane-data.id, v);
                 }
                 hud-gamma-changed(v) => {
                     root.pane-focused(root.pane-data.id);
@@ -380,6 +385,7 @@ export component SplitPaneContainer inherits Rectangle {
     callback tab-tooltip-changed(bool, string, length, length);
     callback hud-toggle-scale-bar(int);
     callback hud-toggle-dropdown(int);
+    callback hud-sharpness-changed(int, float);
     callback hud-gamma-changed(int, float);
     callback hud-brightness-changed(int, float);
     callback hud-contrast-changed(int, float);
@@ -491,6 +497,9 @@ export component SplitPaneContainer inherits Rectangle {
             }
             hud-toggle-dropdown(pane-id) => {
                 root.hud-toggle-dropdown(pane-id);
+            }
+            hud-sharpness-changed(pane-id, v) => {
+                root.hud-sharpness-changed(pane-id, v);
             }
             hud-gamma-changed(pane-id, v) => {
                 root.hud-gamma-changed(pane-id, v);

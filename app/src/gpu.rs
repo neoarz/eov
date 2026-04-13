@@ -43,6 +43,7 @@ struct Adjustments {
     stain_norm_enabled: f32,
     inv_stain_row0: vec4<f32>,
     inv_stain_row1: vec4<f32>,
+    sharpness: f32,
 };
 
 @vertex
@@ -95,11 +96,32 @@ fn apply_adj(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
+// Unsharp mask: sharpen by subtracting a blurred version from the original.
+// Uses a 3x3 box blur approximation (single-pass Laplacian).
+fn apply_sharpen(uv: vec2<f32>, layer: i32, center: vec4<f32>) -> vec4<f32> {
+    if adjustments.sharpness < 0.001 {
+        return center;
+    }
+    let tex_size = vec2<f32>(textureDimensions(tile_array, 0));
+    let step = 1.0 / tex_size;
+    // Sample 4-connected neighbors for Laplacian
+    let n = textureSample(tile_array, tile_sampler, uv + vec2<f32>(0.0, -step.y), layer);
+    let s = textureSample(tile_array, tile_sampler, uv + vec2<f32>(0.0, step.y), layer);
+    let w = textureSample(tile_array, tile_sampler, uv + vec2<f32>(-step.x, 0.0), layer);
+    let e = textureSample(tile_array, tile_sampler, uv + vec2<f32>(step.x, 0.0), layer);
+    // Laplacian = 4*center - neighbors  (high-pass detail)
+    let detail = center.rgb * 4.0 - (n.rgb + s.rgb + w.rgb + e.rgb);
+    // Blend: output = center + sharpness * detail
+    let sharpened = center.rgb + adjustments.sharpness * detail;
+    return vec4<f32>(clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0)), center.a);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fine = textureSample(tile_array, tile_sampler, input.fine_uv, input.fine_layer);
     let coarse = textureSample(tile_array, tile_sampler, input.coarse_uv, input.coarse_layer);
-    return apply_adj(apply_stain_norm(mix(fine, coarse, input.mip_blend)));
+    let blended = mix(fine, coarse, input.mip_blend);
+    return apply_adj(apply_stain_norm(apply_sharpen(input.fine_uv, input.fine_layer, blended)));
 }
 "#;
 
@@ -132,6 +154,7 @@ struct Adjustments {
     stain_norm_enabled: f32,
     inv_stain_row0: vec4<f32>,
     inv_stain_row1: vec4<f32>,
+    sharpness: f32,
 };
 
 @vertex
@@ -203,6 +226,21 @@ fn apply_adj(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
+fn apply_sharpen(uv: vec2<f32>, layer: i32, center: vec4<f32>) -> vec4<f32> {
+    if adjustments.sharpness < 0.001 {
+        return center;
+    }
+    let tex_size = vec2<f32>(textureDimensions(tile_array, 0));
+    let step = 1.0 / tex_size;
+    let n = textureSampleLevel(tile_array, tile_sampler, uv + vec2<f32>(0.0, -step.y), layer, 0.0);
+    let s = textureSampleLevel(tile_array, tile_sampler, uv + vec2<f32>(0.0, step.y), layer, 0.0);
+    let w = textureSampleLevel(tile_array, tile_sampler, uv + vec2<f32>(-step.x, 0.0), layer, 0.0);
+    let e = textureSampleLevel(tile_array, tile_sampler, uv + vec2<f32>(step.x, 0.0), layer, 0.0);
+    let detail = center.rgb * 4.0 - (n.rgb + s.rgb + w.rgb + e.rgb);
+    let sharpened = center.rgb + adjustments.sharpness * detail;
+    return vec4<f32>(clamp(sharpened, vec3<f32>(0.0), vec3<f32>(1.0)), center.a);
+}
+
 @fragment
 fn fs_lanczos(input: VertexOutput) -> @location(0) vec4<f32> {
     let layer_size = vec2<f32>(textureDimensions(tile_array, 0));
@@ -234,7 +272,7 @@ fn fs_lanczos(input: VertexOutput) -> @location(0) vec4<f32> {
         color = color / weight_sum;
     }
 
-    return apply_adj(apply_stain_norm(clamp(color, vec4<f32>(0.0), vec4<f32>(1.0))));
+    return apply_adj(apply_stain_norm(apply_sharpen(input.fine_uv, input.fine_layer, clamp(color, vec4<f32>(0.0), vec4<f32>(1.0)))));
 }
 "#;
 
@@ -279,6 +317,8 @@ struct AdjustmentsUniform {
     inv_stain_r0: [f32; 4], // [inv[0][0], inv[0][1], inv[0][2], scale_h]
     // Row 1 of inverse source stain matrix + scale_e
     inv_stain_r1: [f32; 4], // [inv[1][0], inv[1][1], inv[1][2], scale_e]
+    sharpness: f32,
+    _pad: [f32; 3],
 }
 
 #[derive(Clone)]
@@ -289,6 +329,7 @@ pub(crate) struct QueuedFrame {
     pub(crate) gamma: f32,
     pub(crate) brightness: f32,
     pub(crate) contrast: f32,
+    pub(crate) sharpness: f32,
     pub(crate) stain_norm_enabled: bool,
     pub(crate) inv_stain_r0: [f32; 4],
     pub(crate) inv_stain_r1: [f32; 4],
@@ -304,6 +345,7 @@ impl QueuedFrame {
         self.gamma.to_bits().hash(&mut hasher);
         self.brightness.to_bits().hash(&mut hasher);
         self.contrast.to_bits().hash(&mut hasher);
+        self.sharpness.to_bits().hash(&mut hasher);
         self.stain_norm_enabled.hash(&mut hasher);
         for v in &self.inv_stain_r0 {
             v.to_bits().hash(&mut hasher);
@@ -1060,6 +1102,8 @@ impl GpuRenderer {
             stain_norm_enabled: if frame.stain_norm_enabled { 1.0 } else { 0.0 },
             inv_stain_r0: frame.inv_stain_r0,
             inv_stain_r1: frame.inv_stain_r1,
+            sharpness: frame.sharpness,
+            _pad: [0.0; 3],
         };
         if last_adjustments.as_ref() != Some(&adj) {
             runtime
