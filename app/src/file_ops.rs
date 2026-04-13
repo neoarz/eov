@@ -89,8 +89,10 @@ pub fn open_file(
                 let tile_manager = Arc::new(TileManager::new(tile_manager_wsi, file_id));
 
                 // Create background tile loader (tiles are loaded on-demand)
-                let tile_loader =
-                    TileLoader::new(Arc::clone(&tile_manager), Arc::clone(tile_cache));
+                let tile_loader = Arc::new(TileLoader::new(
+                    Arc::clone(&tile_manager),
+                    Arc::clone(tile_cache),
+                ));
 
                 // Start loading tiles immediately using the initial viewport bounds
                 // This ensures tiles begin loading before the first render

@@ -5,9 +5,10 @@ use parking_lot::Mutex;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct CachedCpuFrame {
@@ -77,6 +78,7 @@ pub struct RenderWorkerPool {
     results_rx: crossbeam_channel::Receiver<CpuRenderResult>,
     next_job_id: AtomicU64,
     recycled_buffers: Mutex<Vec<Vec<u8>>>,
+    latest_jobs: Arc<Mutex<HashMap<usize, u64>>>,
 }
 
 static GLOBAL_RENDER_POOL: OnceLock<Arc<RenderWorkerPool>> = OnceLock::new();
@@ -84,7 +86,7 @@ static GLOBAL_RENDER_POOL: OnceLock<Arc<RenderWorkerPool>> = OnceLock::new();
 impl RenderWorkerPool {
     pub fn new() -> anyhow::Result<Self> {
         let thread_count = std::thread::available_parallelism()
-            .map(|count| count.get().clamp(2, 16))
+            .map(|count| count.get().clamp(4, 32))
             .unwrap_or(4);
         let pool = ThreadPoolBuilder::new()
             .thread_name(|index| format!("cpu-render-{index}"))
@@ -98,6 +100,7 @@ impl RenderWorkerPool {
             results_rx,
             next_job_id: AtomicU64::new(1),
             recycled_buffers: Mutex::new(Vec::new()),
+            latest_jobs: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -107,10 +110,14 @@ impl RenderWorkerPool {
 
     pub fn submit(&self, job: CpuRenderJob) {
         let results_tx = self.results_tx.clone();
+        self.latest_jobs.lock().insert(job.pane_index, job.job_id);
+        let latest_jobs = Arc::clone(&self.latest_jobs);
         let mut buffer = self.acquire_buffer((job.width as usize) * (job.height as usize) * 4);
 
         self.pool.spawn_fifo(move || {
-            render_job_into_buffer(&job, &mut buffer);
+            if !render_job_into_buffer(&job, &latest_jobs, &mut buffer) {
+                return;
+            }
             let _ = results_tx.send(CpuRenderResult {
                 pane_index: job.pane_index,
                 file_id: job.file_id,
@@ -135,7 +142,10 @@ impl RenderWorkerPool {
 
     fn acquire_buffer(&self, needed: usize) -> Vec<u8> {
         let mut buffers = self.recycled_buffers.lock();
-        if let Some(index) = buffers.iter().position(|buffer| buffer.capacity() >= needed) {
+        if let Some(index) = buffers
+            .iter()
+            .position(|buffer| buffer.capacity() >= needed)
+        {
             let mut buffer = buffers.swap_remove(index);
             buffer.resize(needed, 0);
             buffer
@@ -143,6 +153,17 @@ impl RenderWorkerPool {
             vec![0; needed]
         }
     }
+}
+
+fn job_is_current(
+    latest_jobs: &Mutex<HashMap<usize, u64>>,
+    pane_index: usize,
+    job_id: u64,
+) -> bool {
+    latest_jobs
+        .lock()
+        .get(&pane_index)
+        .is_some_and(|current_job_id| *current_job_id == job_id)
 }
 
 pub fn init_global() -> anyhow::Result<()> {
@@ -157,7 +178,15 @@ pub fn global() -> Option<&'static Arc<RenderWorkerPool>> {
     GLOBAL_RENDER_POOL.get()
 }
 
-fn render_job_into_buffer(job: &CpuRenderJob, buffer: &mut [u8]) {
+fn render_job_into_buffer(
+    job: &CpuRenderJob,
+    latest_jobs: &Mutex<HashMap<usize, u64>>,
+    buffer: &mut [u8],
+) -> bool {
+    if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+        return false;
+    }
+
     let width = job.width;
     let height = job.height;
     let stride = (width as usize) * 4;
@@ -167,6 +196,10 @@ fn render_job_into_buffer(job: &CpuRenderJob, buffer: &mut [u8]) {
         .par_chunks_mut(rows_per_chunk * stride)
         .enumerate()
         .for_each(|(chunk_index, chunk)| {
+            if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+                return;
+            }
+
             let start_row = chunk_index * rows_per_chunk;
             let chunk_rows = chunk.len() / stride;
             let chunk_height = chunk_rows as u32;
@@ -181,19 +214,35 @@ fn render_job_into_buffer(job: &CpuRenderJob, buffer: &mut [u8]) {
             );
 
             for command in &job.fallback_blits {
+                if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+                    return;
+                }
                 draw_command_into_chunk(chunk, width, chunk_height, row_offset, command);
             }
             for command in &job.fine_blits {
+                if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+                    return;
+                }
                 draw_command_into_chunk(chunk, width, chunk_height, row_offset, command);
             }
         });
 
+    if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+        return false;
+    }
+
     if let Some(ref params) = job.postprocess.stain_params {
         stain::apply_stain_params_to_buffer(buffer, params);
+        if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+            return false;
+        }
     }
 
     if job.postprocess.sharpness > 0.001 {
         apply_sharpening(buffer, width, height, job.postprocess.sharpness);
+        if !job_is_current(latest_jobs, job.pane_index, job.job_id) {
+            return false;
+        }
     }
 
     let has_adjustments = (job.postprocess.gamma - 1.0).abs() > 0.001
@@ -207,6 +256,8 @@ fn render_job_into_buffer(job: &CpuRenderJob, buffer: &mut [u8]) {
             job.postprocess.contrast,
         );
     }
+
+    job_is_current(latest_jobs, job.pane_index, job.job_id)
 }
 
 fn draw_command_into_chunk(

@@ -17,16 +17,16 @@ const FAILED_RETRY_GENERATIONS: u64 = 12;
 
 fn loader_worker_count() -> usize {
     std::thread::available_parallelism()
-        .map(|count| count.get().clamp(4, 8))
+        .map(|count| count.get().clamp(4, 16))
         .unwrap_or(4)
 }
 
 fn max_tiles_per_frame(worker_count: usize) -> usize {
-    (worker_count * 12).clamp(32, 96)
+    (worker_count * 24).clamp(64, 256)
 }
 
 fn request_channel_capacity(worker_count: usize) -> usize {
-    (worker_count * 16).clamp(64, 256)
+    (worker_count * 32).clamp(128, 512)
 }
 
 /// Background tile loader with automatic cancellation of stale requests
@@ -231,7 +231,7 @@ fn worker_loop(id: usize, context: WorkerContext) {
 
     while !shutdown.load(Ordering::Relaxed) {
         // Wait for a tile request with timeout
-        let coord = match request_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+        let coord = match request_rx.recv_timeout(std::time::Duration::from_millis(10)) {
             Ok(coord) => coord,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,

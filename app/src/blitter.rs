@@ -3,6 +3,7 @@
 //! This module contains optimized functions for copying and scaling tile data
 //! to the viewport buffer.
 
+use rayon::prelude::*;
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 
 #[derive(Clone, Copy)]
@@ -58,76 +59,52 @@ pub struct BlitRect {
     pub exact_height: f64,
 }
 
-#[inline(always)]
-fn compute_linear_col_samples(
-    start_x: u32,
-    end_x: u32,
-    dest_x: i32,
-    exact_x: f64,
-    exact_width: f64,
-    scaled_width: i32,
-    src_width: u32,
-    border: u32,
-    max_x: u32,
-) -> Vec<LinearColSample> {
-    let use_exact = exact_width > 0.0;
-    let mapped_width = if use_exact {
-        exact_width.max(1.0)
-    } else {
-        scaled_width.max(1) as f64
-    };
-    let scale = src_width as f64 / mapped_width;
+#[derive(Clone, Copy)]
+struct AxisMapping {
+    start: u32,
+    end: u32,
+    dest_origin: i32,
+    exact_origin: f64,
+    exact_size: f64,
+    scaled_size: i32,
+}
 
-    (start_x..end_x)
-        .map(|x| {
-            let src_xf = if use_exact {
-                (x as f64 - exact_x) * scale
-            } else {
-                (x as i32 - dest_x) as f64 * scale
-            };
-            let src_x_fp = (src_xf * 65536.0).max(0.0) as u32;
-            let x0_inner = src_x_fp >> 16;
-            let frac = (src_x_fp & 0xFFFF) >> 8;
-            let x0 = (x0_inner + border).min(max_x);
-            let x1 = (x0_inner + border + 1).min(max_x);
-            LinearColSample {
-                x0_4: x0 as usize * 4,
-                x1_4: x1 as usize * 4,
-                w0: 256 - frac,
-                w1: frac,
-            }
-        })
-        .collect()
+impl AxisMapping {
+    #[inline(always)]
+    fn src_coord(self, dest: u32, src_offset: f64, src_range: f64) -> f64 {
+        let use_exact = self.exact_size > 0.0;
+        let mapped_size = if use_exact {
+            self.exact_size.max(1.0)
+        } else {
+            self.scaled_size.max(1) as f64
+        };
+        let scale = src_range / mapped_size;
+
+        if use_exact {
+            src_offset + (dest as f64 - self.exact_origin) * scale
+        } else {
+            src_offset + (dest as i32 - self.dest_origin) as f64 * scale
+        }
+    }
+}
+
+pub struct FrameSrc<'a> {
+    pub pixels: &'a [u8],
+    pub width: u32,
+    pub height: u32,
 }
 
 #[inline(always)]
-fn compute_linear_col_samples_subregion(
-    start_x: u32,
-    end_x: u32,
-    dest_x: i32,
-    exact_x: f64,
-    exact_width: f64,
-    scaled_width: i32,
+fn compute_linear_col_samples(
+    axis: AxisMapping,
     src_offset: f64,
     src_range: f64,
     border: u32,
     max_x: u32,
 ) -> Vec<LinearColSample> {
-    let use_exact = exact_width > 0.0;
-    let mapped_width = if use_exact {
-        exact_width.max(1.0)
-    } else {
-        scaled_width.max(1) as f64
-    };
-    let scale = src_range / mapped_width;
-
-    (start_x..end_x)
+    (axis.start..axis.end)
         .map(|x| {
-            let src_xf = if use_exact {
-                src_offset + (x as f64 - exact_x) * scale
-            } else {
-                src_offset + (x as i32 - dest_x) as f64 * scale
-            };
+            let src_xf = axis.src_coord(x, src_offset, src_range);
             let src_x_fp = (src_xf * 65536.0).max(0.0) as u32;
             let x0_inner = src_x_fp >> 16;
             let frac = (src_x_fp & 0xFFFF) >> 8;
@@ -145,76 +122,16 @@ fn compute_linear_col_samples_subregion(
 
 #[inline(always)]
 fn compute_linear_row_samples(
-    start_y: u32,
-    end_y: u32,
-    dest_y: i32,
-    exact_y: f64,
-    exact_height: f64,
-    scaled_height: i32,
-    src_height: u32,
-    border: u32,
-    max_y: u32,
-    stride: usize,
-) -> Vec<LinearRowSample> {
-    let use_exact = exact_height > 0.0;
-    let mapped_height = if use_exact {
-        exact_height.max(1.0)
-    } else {
-        scaled_height.max(1) as f64
-    };
-    let scale = src_height as f64 / mapped_height;
-
-    (start_y..end_y)
-        .map(|y| {
-            let src_yf = if use_exact {
-                (y as f64 - exact_y) * scale
-            } else {
-                (y as i32 - dest_y) as f64 * scale
-            };
-            let src_y_fp = (src_yf * 65536.0).max(0.0) as u32;
-            let y0_inner = src_y_fp >> 16;
-            let frac = (src_y_fp & 0xFFFF) >> 8;
-            let y0 = (y0_inner + border).min(max_y);
-            let y1 = (y0_inner + border + 1).min(max_y);
-            LinearRowSample {
-                row0: y0 as usize * stride,
-                row1: y1 as usize * stride,
-                w0: 256 - frac,
-                w1: frac,
-            }
-        })
-        .collect()
-}
-
-#[inline(always)]
-fn compute_linear_row_samples_subregion(
-    start_y: u32,
-    end_y: u32,
-    dest_y: i32,
-    exact_y: f64,
-    exact_height: f64,
-    scaled_height: i32,
+    axis: AxisMapping,
     src_offset: f64,
     src_range: f64,
     border: u32,
     max_y: u32,
     stride: usize,
 ) -> Vec<LinearRowSample> {
-    let use_exact = exact_height > 0.0;
-    let mapped_height = if use_exact {
-        exact_height.max(1.0)
-    } else {
-        scaled_height.max(1) as f64
-    };
-    let scale = src_range / mapped_height;
-
-    (start_y..end_y)
+    (axis.start..axis.end)
         .map(|y| {
-            let src_yf = if use_exact {
-                src_offset + (y as f64 - exact_y) * scale
-            } else {
-                src_offset + (y as i32 - dest_y) as f64 * scale
-            };
+            let src_yf = axis.src_coord(y, src_offset, src_range);
             let src_y_fp = (src_yf * 65536.0).max(0.0) as u32;
             let y0_inner = src_y_fp >> 16;
             let frac = (src_y_fp & 0xFFFF) >> 8;
@@ -242,32 +159,14 @@ fn normalize_lanczos_weights(weights: &mut [f32; 6]) {
 
 #[inline(always)]
 fn compute_lanczos_col_samples(
-    start_x: u32,
-    end_x: u32,
-    dest_x: i32,
-    exact_x: f64,
-    exact_width: f64,
-    scaled_width: i32,
+    axis: AxisMapping,
     src_width: u32,
     border: u32,
     max_x: i32,
 ) -> Vec<LanczosColSample> {
-    let use_exact = exact_width > 0.0;
-    let mapped_width = if use_exact {
-        exact_width.max(1.0)
-    } else {
-        scaled_width.max(1) as f64
-    };
-    let scale = src_width as f64 / mapped_width;
-
-    (start_x..end_x)
+    (axis.start..axis.end)
         .map(|x| {
-            let src_xf = if use_exact {
-                (x as f64 - exact_x) * scale
-            } else {
-                (x as i32 - dest_x) as f64 * scale
-            }
-            .max(0.0);
+            let src_xf = axis.src_coord(x, 0.0, src_width as f64).max(0.0);
             let center_x = src_xf.floor() as i32;
             let frac_x = src_xf - center_x as f64;
             let mut offsets = [0usize; 6];
@@ -285,33 +184,15 @@ fn compute_lanczos_col_samples(
 
 #[inline(always)]
 fn compute_lanczos_row_samples(
-    start_y: u32,
-    end_y: u32,
-    dest_y: i32,
-    exact_y: f64,
-    exact_height: f64,
-    scaled_height: i32,
+    axis: AxisMapping,
     src_height: u32,
     border: u32,
     max_y: i32,
     stride: usize,
 ) -> Vec<LanczosRowSample> {
-    let use_exact = exact_height > 0.0;
-    let mapped_height = if use_exact {
-        exact_height.max(1.0)
-    } else {
-        scaled_height.max(1) as f64
-    };
-    let scale = src_height as f64 / mapped_height;
-
-    (start_y..end_y)
+    (axis.start..axis.end)
         .map(|y| {
-            let src_yf = if use_exact {
-                (y as f64 - exact_y) * scale
-            } else {
-                (y as i32 - dest_y) as f64 * scale
-            }
-            .max(0.0);
+            let src_yf = axis.src_coord(y, 0.0, src_height as f64).max(0.0);
             let center_y = src_yf.floor() as i32;
             let frac_y = src_yf - center_y as f64;
             let mut rows = [0usize; 6];
@@ -449,25 +330,29 @@ pub fn blit_tile(
         return;
     }
 
-    let x_samples = compute_linear_col_samples(
-        start_x,
-        end_x,
-        dest_x,
-        rect.exact_x,
-        rect.exact_width,
-        scaled_width,
-        src_width,
-        border,
-        data_w_minus_1,
-    );
+    let x_axis = AxisMapping {
+        start: start_x,
+        end: end_x,
+        dest_origin: dest_x,
+        exact_origin: rect.exact_x,
+        exact_size: rect.exact_width,
+        scaled_size: scaled_width,
+    };
+    let y_axis = AxisMapping {
+        start: start_y,
+        end: end_y,
+        dest_origin: dest_y,
+        exact_origin: rect.exact_y,
+        exact_size: rect.exact_height,
+        scaled_size: scaled_height,
+    };
+
+    let x_samples =
+        compute_linear_col_samples(x_axis, 0.0, src_width as f64, border, data_w_minus_1);
     let y_samples = compute_linear_row_samples(
-        start_y,
-        end_y,
-        dest_y,
-        rect.exact_y,
-        rect.exact_height,
-        scaled_height,
-        src_height,
+        y_axis,
+        0.0,
+        src_height as f64,
         border,
         data_h_minus_1,
         src_stride,
@@ -603,36 +488,30 @@ pub fn blit_tile_lanczos3(
     let src_stride = (data_width * 4) as usize;
     let data_w = data_width as i32;
     let data_h = data_height as i32;
-    let x_samples = compute_lanczos_col_samples(
-        start_x,
-        end_x,
-        dest_x,
-        rect.exact_x,
-        rect.exact_width,
-        scaled_width,
-        src_width,
-        border,
-        data_w - 1,
-    );
-    let y_samples = compute_lanczos_row_samples(
-        start_y,
-        end_y,
-        dest_y,
-        rect.exact_y,
-        rect.exact_height,
-        scaled_height,
-        src_height,
-        border,
-        data_h - 1,
-        src_stride,
-    );
+    let x_axis = AxisMapping {
+        start: start_x,
+        end: end_x,
+        dest_origin: dest_x,
+        exact_origin: rect.exact_x,
+        exact_size: rect.exact_width,
+        scaled_size: scaled_width,
+    };
+    let y_axis = AxisMapping {
+        start: start_y,
+        end: end_y,
+        dest_origin: dest_y,
+        exact_origin: rect.exact_y,
+        exact_size: rect.exact_height,
+        scaled_size: scaled_height,
+    };
+    let x_samples = compute_lanczos_col_samples(x_axis, src_width, border, data_w - 1);
+    let y_samples = compute_lanczos_row_samples(y_axis, src_height, border, data_h - 1, src_stride);
 
     for (row_index, row_sample) in y_samples.iter().enumerate() {
         let y = start_y as usize + row_index;
         let dest_row = y * dest_stride;
 
         for (col_index, col_sample) in x_samples.iter().enumerate() {
-
             let mut r = 0.0_f64;
             let mut g = 0.0_f64;
             let mut bl = 0.0_f64;
@@ -777,49 +656,37 @@ pub fn blit_tile_trilinear(
     let cv_min = coarse.uv_min[1] as f64 * coarse_h as f64;
     let cu_range = (coarse.uv_max[0] - coarse.uv_min[0]) as f64 * coarse_w as f64;
     let cv_range = (coarse.uv_max[1] - coarse.uv_min[1]) as f64 * coarse_h as f64;
-    let fine_x_samples = compute_linear_col_samples(
-        start_x,
-        end_x,
-        dest_x,
-        rect.exact_x,
-        rect.exact_width,
-        scaled_width,
-        fine_w,
-        fine_border,
-        fine_dw1,
-    );
+    let x_axis = AxisMapping {
+        start: start_x,
+        end: end_x,
+        dest_origin: dest_x,
+        exact_origin: rect.exact_x,
+        exact_size: rect.exact_width,
+        scaled_size: scaled_width,
+    };
+    let y_axis = AxisMapping {
+        start: start_y,
+        end: end_y,
+        dest_origin: dest_y,
+        exact_origin: rect.exact_y,
+        exact_size: rect.exact_height,
+        scaled_size: scaled_height,
+    };
+    let fine_x_samples =
+        compute_linear_col_samples(x_axis, 0.0, fine_w as f64, fine_border, fine_dw1);
     let fine_y_samples = compute_linear_row_samples(
-        start_y,
-        end_y,
-        dest_y,
-        rect.exact_y,
-        rect.exact_height,
-        scaled_height,
-        fine_h,
+        y_axis,
+        0.0,
+        fine_h as f64,
         fine_border,
         fine_dh1,
         fine_stride,
     );
 
-    let coarse_x_samples = compute_linear_col_samples_subregion(
-        start_x,
-        end_x,
-        dest_x,
-        rect.exact_x,
-        rect.exact_width,
-        scaled_width,
-        cu_min,
-        cu_range,
-        coarse_border,
-        coarse_dw1,
-    );
-    let coarse_y_samples = compute_linear_row_samples_subregion(
-        start_y,
-        end_y,
-        dest_y,
-        rect.exact_y,
-        rect.exact_height,
-        scaled_height,
+    let coarse_x_samples =
+        compute_linear_col_samples(x_axis, cu_min, cu_range, coarse_border, coarse_dw1);
+    let coarse_y_samples = compute_linear_row_samples(
+        y_axis,
         cv_min,
         cv_range,
         coarse_border,
@@ -898,18 +765,27 @@ pub fn reproject_frame(
     dest: &mut [u8],
     dest_width: u32,
     dest_height: u32,
-    src: &[u8],
-    src_width: u32,
-    src_height: u32,
+    src: FrameSrc<'_>,
     src_viewport: &crate::render_pool::CachedCpuFrame,
     dest_viewport: &common::Viewport,
     clear_rgba: [u8; 4],
 ) {
+    let FrameSrc {
+        pixels: src_pixels,
+        width: src_width,
+        height: src_height,
+    } = src;
     if dest_width == 0 || dest_height == 0 || src_width == 0 || src_height == 0 {
         return;
     }
 
-    fast_fill_rgba(dest, clear_rgba[0], clear_rgba[1], clear_rgba[2], clear_rgba[3]);
+    fast_fill_rgba(
+        dest,
+        clear_rgba[0],
+        clear_rgba[1],
+        clear_rgba[2],
+        clear_rgba[3],
+    );
 
     let src_bounds = src_viewport.viewport.bounds();
     let dest_bounds = dest_viewport.bounds();
@@ -938,69 +814,69 @@ pub fn reproject_frame(
         })
         .collect();
 
-    for y in 0..dest_height {
-        let image_y = dest_bounds.top + y as f64 / dest_viewport.zoom;
-        let src_y = (image_y - src_bounds.top) * src_viewport.viewport.zoom;
-        if src_y < 0.0 || src_y > max_y {
-            continue;
-        }
-        let src_y_fp = (src_y * 65536.0).max(0.0) as u32;
-        let y0 = (src_y_fp >> 16).min(src_height.saturating_sub(1));
-        let frac_y = (src_y_fp & 0xFFFF) >> 8;
-        let y1 = (y0 + 1).min(src_height.saturating_sub(1));
-        let row_sample = LinearRowSample {
-            row0: y0 as usize * src_stride,
-            row1: y1 as usize * src_stride,
-            w0: 256 - frac_y,
-            w1: frac_y,
-        };
-        let dest_row = y as usize * dest_stride;
-
-        for (x, col_sample) in x_samples.iter().enumerate() {
-            let Some(col_sample) = col_sample else {
-                continue;
-            };
-
-            let w00 = col_sample.w0 * row_sample.w0;
-            let w10 = col_sample.w1 * row_sample.w0;
-            let w01 = col_sample.w0 * row_sample.w1;
-            let w11 = col_sample.w1 * row_sample.w1;
-            let dest_idx = dest_row + x * 4;
-
-            unsafe {
-                let s00 = src.get_unchecked(
-                    row_sample.row0 + col_sample.x0_4..row_sample.row0 + col_sample.x0_4 + 4,
-                );
-                let s10 = src.get_unchecked(
-                    row_sample.row0 + col_sample.x1_4..row_sample.row0 + col_sample.x1_4 + 4,
-                );
-                let s01 = src.get_unchecked(
-                    row_sample.row1 + col_sample.x0_4..row_sample.row1 + col_sample.x0_4 + 4,
-                );
-                let s11 = src.get_unchecked(
-                    row_sample.row1 + col_sample.x1_4..row_sample.row1 + col_sample.x1_4 + 4,
-                );
-                let d = dest.get_unchecked_mut(dest_idx..dest_idx + 4);
-
-                d[0] = ((s00[0] as u32 * w00
-                    + s10[0] as u32 * w10
-                    + s01[0] as u32 * w01
-                    + s11[0] as u32 * w11)
-                    >> 16) as u8;
-                d[1] = ((s00[1] as u32 * w00
-                    + s10[1] as u32 * w10
-                    + s01[1] as u32 * w01
-                    + s11[1] as u32 * w11)
-                    >> 16) as u8;
-                d[2] = ((s00[2] as u32 * w00
-                    + s10[2] as u32 * w10
-                    + s01[2] as u32 * w01
-                    + s11[2] as u32 * w11)
-                    >> 16) as u8;
-                d[3] = 255;
+    dest.par_chunks_mut(dest_stride)
+        .enumerate()
+        .for_each(|(y, dest_row)| {
+            let image_y = dest_bounds.top + y as f64 / dest_viewport.zoom;
+            let src_y = (image_y - src_bounds.top) * src_viewport.viewport.zoom;
+            if src_y < 0.0 || src_y > max_y {
+                return;
             }
-        }
-    }
+            let src_y_fp = (src_y * 65536.0).max(0.0) as u32;
+            let y0 = (src_y_fp >> 16).min(src_height.saturating_sub(1));
+            let frac_y = (src_y_fp & 0xFFFF) >> 8;
+            let y1 = (y0 + 1).min(src_height.saturating_sub(1));
+            let row_sample = LinearRowSample {
+                row0: y0 as usize * src_stride,
+                row1: y1 as usize * src_stride,
+                w0: 256 - frac_y,
+                w1: frac_y,
+            };
+            for (x, col_sample) in x_samples.iter().enumerate() {
+                let Some(col_sample) = col_sample else {
+                    continue;
+                };
+
+                let w00 = col_sample.w0 * row_sample.w0;
+                let w10 = col_sample.w1 * row_sample.w0;
+                let w01 = col_sample.w0 * row_sample.w1;
+                let w11 = col_sample.w1 * row_sample.w1;
+                let dest_idx = x * 4;
+
+                unsafe {
+                    let s00 = src_pixels.get_unchecked(
+                        row_sample.row0 + col_sample.x0_4..row_sample.row0 + col_sample.x0_4 + 4,
+                    );
+                    let s10 = src_pixels.get_unchecked(
+                        row_sample.row0 + col_sample.x1_4..row_sample.row0 + col_sample.x1_4 + 4,
+                    );
+                    let s01 = src_pixels.get_unchecked(
+                        row_sample.row1 + col_sample.x0_4..row_sample.row1 + col_sample.x0_4 + 4,
+                    );
+                    let s11 = src_pixels.get_unchecked(
+                        row_sample.row1 + col_sample.x1_4..row_sample.row1 + col_sample.x1_4 + 4,
+                    );
+                    let d = dest_row.get_unchecked_mut(dest_idx..dest_idx + 4);
+
+                    d[0] = ((s00[0] as u32 * w00
+                        + s10[0] as u32 * w10
+                        + s01[0] as u32 * w01
+                        + s11[0] as u32 * w11)
+                        >> 16) as u8;
+                    d[1] = ((s00[1] as u32 * w00
+                        + s10[1] as u32 * w10
+                        + s01[1] as u32 * w01
+                        + s11[1] as u32 * w11)
+                        >> 16) as u8;
+                    d[2] = ((s00[2] as u32 * w00
+                        + s10[2] as u32 * w10
+                        + s01[2] as u32 * w01
+                        + s11[2] as u32 * w11)
+                        >> 16) as u8;
+                    d[3] = 255;
+                }
+            }
+        });
 }
 
 /// Create a SharedPixelBuffer from raw RGBA data

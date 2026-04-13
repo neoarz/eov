@@ -242,7 +242,7 @@ pub struct OpenFile {
     /// Tile manager for this file
     pub tile_manager: Arc<TileManager>,
     /// Background tile loader
-    pub tile_loader: TileLoader,
+    pub tile_loader: Arc<TileLoader>,
     /// Primary viewport state
     pub viewport: ViewportState,
     /// Per-pane viewport/render state indexed by pane position
@@ -260,7 +260,7 @@ pub struct NewOpenFile {
     pub path: PathBuf,
     pub wsi: WsiFile,
     pub tile_manager: Arc<TileManager>,
-    pub tile_loader: TileLoader,
+    pub tile_loader: Arc<TileLoader>,
     pub viewport: ViewportState,
     pub thumbnail: Option<Vec<u8>>,
 }
