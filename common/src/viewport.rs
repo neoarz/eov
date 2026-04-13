@@ -231,12 +231,14 @@ pub struct ViewportState {
     zoom_anchor_screen: DVec2,
     /// Image position to keep under cursor during zoom
     zoom_anchor_image: DVec2,
-    /// Zoom animation start time
+    /// Zoom animation start time (timed eased animation for discrete zooms)
     zoom_start_time: Option<Instant>,
     /// Duration of the current zoom animation in milliseconds
     zoom_duration_ms: u64,
     /// Use a smoother ease-in-out profile for larger discrete zoom jumps
     zoom_use_ease_in_out: bool,
+    /// Exponential-smoothing chase mode (for scroll wheel zoom)
+    zoom_chasing: bool,
 
     // --- Framing/navigation animation ---
     /// Navigation start center (for smooth frame-to-view / frame-to-ROI)
@@ -274,6 +276,7 @@ impl ViewportState {
             zoom_start_time: None,
             zoom_duration_ms: ANIMATION_DURATION_MS,
             zoom_use_ease_in_out: false,
+            zoom_chasing: false,
             navigation_start_center: initial_center,
             navigation_target_center: initial_center,
             navigation_start_zoom: initial_zoom,
@@ -434,13 +437,39 @@ impl ViewportState {
             }
         }
 
-        // --- Zoom animation ---
+        // --- Scroll wheel zoom chase (exponential smoothing) ---
+        if self.zoom_chasing {
+            let log_current = self.viewport.zoom.ln();
+            let log_target = self.target_zoom.ln();
+            let diff = (log_target - log_current).abs();
+
+            if diff < 0.0001 {
+                // Close enough — snap to target
+                self.viewport.zoom = self.target_zoom;
+                self.viewport
+                    .anchor_at(self.zoom_anchor_image, self.zoom_anchor_screen);
+                self.zoom_chasing = false;
+            } else {
+                let dt = now.duration_since(self.last_update).as_secs_f64();
+                // Time constant: 80ms gives snappy response with smooth tail
+                let tau = 0.08;
+                let alpha = 1.0 - (-dt / tau).exp();
+                let new_log = log_current + (log_target - log_current) * alpha;
+                let new_zoom = new_log.exp().clamp(MIN_ZOOM, MAX_ZOOM);
+
+                self.viewport.zoom = new_zoom;
+                self.viewport
+                    .anchor_at(self.zoom_anchor_image, self.zoom_anchor_screen);
+                is_animating = true;
+                trace!("Zoom chase: zoom={:.4}, target={:.4}", new_zoom, self.target_zoom);
+            }
+        }
+
+        // --- Timed zoom animation (discrete/button zooms) ---
         if let Some(start_time) = self.zoom_start_time {
             let elapsed = now.duration_since(start_time);
 
             if elapsed < zoom_duration {
-                // Wheel zoom feels good with cubic ease-out; larger discrete button jumps
-                // animate more naturally with an ease-in-out profile.
                 let t = elapsed.as_secs_f64() / zoom_duration.as_secs_f64();
                 let ease = if self.zoom_use_ease_in_out {
                     t * t * (3.0 - 2.0 * t)
@@ -479,6 +508,7 @@ impl ViewportState {
     pub fn stop(&mut self) {
         self.inertia_start_time = None;
         self.zoom_start_time = None;
+        self.zoom_chasing = false;
         self.navigation_start_time = None;
         self.is_dragging = false;
         self.target_zoom = self.viewport.zoom;
@@ -489,9 +519,27 @@ impl ViewportState {
         self.navigation_target_center = self.viewport.center;
     }
 
-    /// Zoom at screen position with smooth animation
+    /// Zoom at screen position with smooth exponential chase.
+    /// Ideal for scroll wheel input — each tick compounds onto the target
+    /// while the viewport smoothly converges via exponential smoothing.
     pub fn zoom_at(&mut self, factor: f64, screen_x: f64, screen_y: f64) {
-        self.zoom_at_with_duration(factor, screen_x, screen_y, ANIMATION_DURATION_MS);
+        self.navigation_start_time = None;
+        self.zoom_start_time = None; // cancel any timed animation
+
+        let anchor_screen = DVec2::new(screen_x, screen_y);
+        let anchor_image = self.viewport.screen_to_image(screen_x, screen_y);
+
+        // Compound onto existing target when already chasing
+        let base_zoom = if self.zoom_chasing {
+            self.target_zoom
+        } else {
+            self.viewport.zoom
+        };
+
+        self.zoom_anchor_screen = anchor_screen;
+        self.zoom_anchor_image = anchor_image;
+        self.target_zoom = (base_zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.zoom_chasing = true;
     }
 
     /// Zoom at screen position with smooth animation and an explicit duration.
@@ -522,6 +570,7 @@ impl ViewportState {
         let anchor_y = self.viewport.height / 2.0;
 
         self.navigation_start_time = None;
+        self.zoom_chasing = false;
         self.zoom_use_ease_in_out = false;
         self.zoom_duration_ms = duration_ms.max(1);
         self.zoom_start = self.viewport.zoom;
@@ -592,6 +641,7 @@ impl ViewportState {
         ease_in_out: bool,
     ) {
         self.navigation_start_time = None;
+        self.zoom_chasing = false; // cancel any chase
         self.zoom_duration_ms = duration_ms.max(1);
         self.zoom_use_ease_in_out = ease_in_out;
 
@@ -636,6 +686,7 @@ impl ViewportState {
         self.is_dragging
             || self.inertia_start_time.is_some()
             || self.zoom_start_time.is_some()
+            || self.zoom_chasing
             || self.navigation_start_time.is_some()
     }
 }
