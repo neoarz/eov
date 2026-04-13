@@ -25,6 +25,10 @@ pub const NAVIGATION_DURATION_MS: u64 = 300;
 /// Pan inertia duration (500ms for more perceptible glide)
 pub const INERTIA_DURATION_MS: u64 = 500;
 
+/// Minimum drag displacement (in screen pixels) required to trigger inertia.
+/// Prevents tiny mouse jitter during a quick catch-click from restarting momentum.
+pub const INERTIA_MIN_DISPLACEMENT: f64 = 5.0;
+
 /// Pan margin ratio (can pan past edges by this percentage)
 pub const PAN_MARGIN_RATIO: f64 = 0.5;
 
@@ -352,7 +356,7 @@ impl ViewportState {
                 total_time = last_time.duration_since(*first_time).as_secs_f64();
             }
 
-            if total_time > 0.001 {
+            if total_time > 0.001 && total_delta.length() >= INERTIA_MIN_DISPLACEMENT {
                 // Velocity in screen pixels per second
                 let velocity = total_delta / total_time;
                 // Only apply inertia if velocity is significant (lowered threshold for responsiveness)
