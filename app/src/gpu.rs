@@ -9,6 +9,7 @@ use slint::{GraphicsAPI, Image, RenderingState};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -293,6 +294,47 @@ pub(crate) struct QueuedFrame {
     pub(crate) inv_stain_r1: [f32; 4],
 }
 
+impl QueuedFrame {
+    /// Compute a lightweight fingerprint of all render-relevant inputs.
+    /// Used to skip redundant vertex rebuilds and GPU render passes.
+    fn fingerprint(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.width.hash(&mut hasher);
+        self.height.hash(&mut hasher);
+        self.gamma.to_bits().hash(&mut hasher);
+        self.brightness.to_bits().hash(&mut hasher);
+        self.contrast.to_bits().hash(&mut hasher);
+        self.stain_norm_enabled.hash(&mut hasher);
+        for v in &self.inv_stain_r0 {
+            v.to_bits().hash(&mut hasher);
+        }
+        for v in &self.inv_stain_r1 {
+            v.to_bits().hash(&mut hasher);
+        }
+        self.draws.len().hash(&mut hasher);
+        for draw in &self.draws {
+            draw.tile.coord.hash(&mut hasher);
+            draw.coarse_tile
+                .as_ref()
+                .map(|t| t.coord)
+                .hash(&mut hasher);
+            draw.screen_x.hash(&mut hasher);
+            draw.screen_y.hash(&mut hasher);
+            draw.screen_w.hash(&mut hasher);
+            draw.screen_h.hash(&mut hasher);
+            for v in &draw.coarse_uv_min {
+                v.to_bits().hash(&mut hasher);
+            }
+            for v in &draw.coarse_uv_max {
+                v.to_bits().hash(&mut hasher);
+            }
+            draw.mip_blend.to_bits().hash(&mut hasher);
+            (draw.filtering_mode as u8).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
 #[derive(Clone)]
 struct ImportedSurface {
     texture: wgpu::Texture,
@@ -544,6 +586,9 @@ pub struct GpuRenderer {
     /// waste most of the memory budget and limit the number of available layers.
     tile_arrays: HashMap<u32, TileArray>,
     frame_counter: u64,
+    /// Fingerprint of the last successfully rendered frame per slot.
+    /// Used to skip redundant vertex rebuilds and render passes.
+    last_rendered_fingerprint: HashMap<usize, u64>,
 }
 
 impl GpuRenderer {
@@ -553,6 +598,7 @@ impl GpuRenderer {
             pending_frames: HashMap::new(),
             tile_arrays: HashMap::new(),
             frame_counter: 0,
+            last_rendered_fingerprint: HashMap::new(),
         }
     }
 
@@ -579,6 +625,20 @@ impl GpuRenderer {
         self.runtime.as_ref()?;
 
         let surface_recreated = self.ensure_surface(slot, frame.width, frame.height)?;
+
+        // Skip the vertex rebuild and render pass if the frame is identical
+        // to what was last rendered on this slot.
+        if !surface_recreated {
+            let fp = frame.fingerprint();
+            if self
+                .last_rendered_fingerprint
+                .get(&slot.index())
+                .is_some_and(|prev| *prev == fp)
+            {
+                return self.surface_image(slot);
+            }
+        }
+
         self.pending_frames.insert(slot.index(), frame);
 
         if surface_recreated {
@@ -778,6 +838,7 @@ impl GpuRenderer {
         self.runtime = None;
         self.pending_frames.clear();
         self.tile_arrays.clear();
+        self.last_rendered_fingerprint.clear();
     }
 
     fn ensure_surface(&mut self, slot: SurfaceSlot, width: u32, height: u32) -> Option<bool> {
@@ -846,6 +907,7 @@ impl GpuRenderer {
 
         for (slot_index, frame) in pending_frames {
             if runtime.surfaces.contains_key(&slot_index) {
+                let fp = frame.fingerprint();
                 Self::render_frame(
                     runtime,
                     &mut self.tile_arrays,
@@ -853,6 +915,7 @@ impl GpuRenderer {
                     frame,
                     frame_id,
                 );
+                self.last_rendered_fingerprint.insert(slot_index, fp);
             }
         }
     }
