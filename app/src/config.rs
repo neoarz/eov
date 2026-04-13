@@ -1,5 +1,5 @@
-use crate::state::{FilteringMode, RenderBackend};
 use anyhow::{Context, Result};
+use common::{FilteringMode, RenderBackend};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;

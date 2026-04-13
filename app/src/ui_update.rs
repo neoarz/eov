@@ -3,10 +3,7 @@
 //! This module contains functions for updating UI elements like tabs,
 //! recent files, and render backend settings.
 
-use crate::state::{
-    AppState, FilteringMode, HudSettings, MeasurementUnit, PaneId, RenderBackend,
-    StainNormalization,
-};
+use crate::state::{AppState, HudSettings, PaneId};
 use crate::tools::{pane_overlay_data, pane_viewport_state};
 use crate::{
     ContextMenuItem, FilteringMode as SlintFilteringMode, HudSettings as SlintHudSettings,
@@ -15,46 +12,12 @@ use crate::{
     StainNormalization as SlintStainNormalization, TabData, ViewportInfo,
 };
 use common::viewport::{MAX_ZOOM, MIN_ZOOM};
+use common::{
+    FilteringMode, MeasurementUnit, RenderBackend, StainNormalization, format_decimal,
+    format_file_size, format_u64,
+};
 use slint::{Image, Model, SharedString, VecModel};
 use std::{fs, rc::Rc};
-
-fn format_decimal(value: f64) -> String {
-    let mut formatted = format!("{value:.2}");
-    while formatted.contains('.') && formatted.ends_with('0') {
-        formatted.pop();
-    }
-    if formatted.ends_with('.') {
-        formatted.pop();
-    }
-    formatted
-}
-
-fn format_u64(value: u64) -> String {
-    let digits = value.to_string();
-    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().rev().enumerate() {
-        if index != 0 && index % 3 == 0 {
-            formatted.push(',');
-        }
-        formatted.push(ch);
-    }
-    formatted.chars().rev().collect()
-}
-
-fn format_file_size(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-
-    let bytes = bytes as f64;
-    if bytes >= GB {
-        format!("{} GB", format_decimal(bytes / GB))
-    } else if bytes >= MB {
-        format!("{} MB", format_decimal(bytes / MB))
-    } else {
-        format!("{} KB", format_decimal(bytes / KB))
-    }
-}
 
 fn build_metadata_items(
     state: &AppState,

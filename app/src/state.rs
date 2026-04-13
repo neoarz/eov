@@ -1,7 +1,10 @@
 //! Application state management
 
 use crate::tile_loader::TileLoader;
-use common::{TileManager, ViewportState, WsiFile};
+use common::{
+    FilteringMode, MeasurementUnit, RenderBackend, StainNormalization, TileManager, ViewportState,
+    WsiFile,
+};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -11,46 +14,6 @@ use std::sync::Arc;
 pub struct PaneState {
     pub tabs: Vec<i32>,
     pub active_tab_id: Option<i32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RenderBackend {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-/// Filtering mode for tile rendering
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FilteringMode {
-    /// Bilinear interpolation within a single mip level
-    Bilinear,
-    /// Trilinear: bilinear + mip-level blending
-    #[default]
-    Trilinear,
-    /// Lanczos-3 (a=3) resampling kernel
-    Lanczos3,
-}
-
-/// Measurement unit for scale bar and measurements
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MeasurementUnit {
-    /// Micrometers (µm)
-    #[default]
-    Um,
-    /// Millimeters (mm)
-    Mm,
-    /// Inches
-    Inches,
-}
-
-/// Stain normalization method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum StainNormalization {
-    #[default]
-    None,
-    Macenko,
-    Vahadane,
 }
 
 /// Per-tab HUD settings

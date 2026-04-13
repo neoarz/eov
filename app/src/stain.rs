@@ -15,7 +15,7 @@
 //! 6. Reconstruction via target stain matrix
 //! 7. OD → RGB conversion
 
-use crate::state::StainNormalization;
+use common::StainNormalization;
 use tracing::debug;
 
 // ─── Reference target stain matrix (Ruifrok & Johnston, 2001) ────────────────

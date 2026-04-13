@@ -9,13 +9,12 @@ use crate::gpu::{QueuedFrame, SurfaceSlot, TileDraw};
 use crate::render_pool::{
     CachedCpuFrame, CpuBlitCommand, CpuBlitKind, CpuRenderJob, CpuRenderPostProcess,
 };
-use crate::state::{
-    AppState, FilteringMode, OpenFile, PaneId, RenderBackend, StainNormalization,
-    TileRequestSignature,
-};
+use crate::state::{AppState, OpenFile, PaneId, TileRequestSignature};
 use crate::tile_loader::{TileLoader, calculate_wanted_tiles};
 use crate::tools;
-use common::{TileCache, TileManager, Viewport, WsiFile};
+use common::{
+    FilteringMode, RenderBackend, StainNormalization, TileCache, TileManager, Viewport, WsiFile,
+};
 use parking_lot::RwLock;
 use rayon::prelude::*;
 use slint::{ComponentHandle, Image};
@@ -1940,37 +1939,36 @@ fn render_pane_to_image(
         });
     }
 
-    let stain_params =
-        if !is_moving && hud_stain_normalization != crate::state::StainNormalization::None {
-            let tile_slices: Vec<&[u8]> = cached_tiles
-                .fine_tiles
-                .iter()
-                .map(|(_, td)| td.data.as_slice())
-                .chain(fallback_commands.iter().map(|cmd| cmd.tile.data.as_slice()))
-                .collect();
-            let (params, cache_update) = resolve_stain_params_from_tiles(
-                hud_stain_normalization,
-                loaded_tile_epoch,
-                file.pane_state(pane).and_then(|ps| ps.cached_stain_params),
-                file.pane_state(pane)
-                    .map(|ps| ps.stain_params_epoch)
-                    .unwrap_or(0),
-                file.pane_state(pane)
-                    .map(|ps| ps.stain_params_method)
-                    .unwrap_or(StainNormalization::None),
-                &tile_slices,
-            );
-            if let Some((params, epoch, method)) = cache_update
-                && let Some(ps) = file.pane_state_mut(pane)
-            {
-                ps.cached_stain_params = Some(params);
-                ps.stain_params_epoch = epoch;
-                ps.stain_params_method = method;
-            }
-            params
-        } else {
-            None
-        };
+    let stain_params = if !is_moving && hud_stain_normalization != StainNormalization::None {
+        let tile_slices: Vec<&[u8]> = cached_tiles
+            .fine_tiles
+            .iter()
+            .map(|(_, td)| td.data.as_slice())
+            .chain(fallback_commands.iter().map(|cmd| cmd.tile.data.as_slice()))
+            .collect();
+        let (params, cache_update) = resolve_stain_params_from_tiles(
+            hud_stain_normalization,
+            loaded_tile_epoch,
+            file.pane_state(pane).and_then(|ps| ps.cached_stain_params),
+            file.pane_state(pane)
+                .map(|ps| ps.stain_params_epoch)
+                .unwrap_or(0),
+            file.pane_state(pane)
+                .map(|ps| ps.stain_params_method)
+                .unwrap_or(StainNormalization::None),
+            &tile_slices,
+        );
+        if let Some((params, epoch, method)) = cache_update
+            && let Some(ps) = file.pane_state_mut(pane)
+        {
+            ps.cached_stain_params = Some(params);
+            ps.stain_params_epoch = epoch;
+            ps.stain_params_method = method;
+        }
+        params
+    } else {
+        None
+    };
 
     let preview_image = if is_moving {
         render_cached_preview(

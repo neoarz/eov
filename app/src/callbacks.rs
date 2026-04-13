@@ -1,8 +1,5 @@
 use crate::config;
-use crate::state::{
-    self, AppState, FilteringMode, HudSettings, MeasurementUnit, PaneId, RenderBackend,
-    StainNormalization,
-};
+use crate::state::{self, AppState, HudSettings, PaneId};
 use crate::{
     AppWindow, FilteringMode as SlintFilteringMode, MeasurementUnit as SlintMeasurementUnit,
     RenderMode, StainNormalization as SlintStainNormalization, ToolType, build_recent_menu_items,
@@ -12,8 +9,8 @@ use crate::{
     request_render_loop, slider_value_to_zoom, update_filtering_mode, update_render_backend,
     update_tabs, update_tool_overlays, update_tool_state,
 };
-use common::TileCache;
 use common::viewport::ZOOM_FACTOR;
+use common::{FilteringMode, MeasurementUnit, RenderBackend, StainNormalization, TileCache};
 use parking_lot::RwLock;
 use rfd::FileDialog;
 use slint::{ComponentHandle, SharedString, Timer, VecModel};

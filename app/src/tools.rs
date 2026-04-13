@@ -7,7 +7,8 @@ use crate::state::{
     AppState, ImagePoint, Measurement, OpenFile, PaneId, RegionOfInterest, Tool,
     ToolInteractionState,
 };
-use crate::{MeasurementLine, ROIRect, ToolType, ViewportState};
+use crate::{MeasurementLine, ROIRect, ToolType};
+use common::ViewportState;
 /// Get the viewport state for a specific pane from an open file
 pub fn pane_viewport_state(file: &OpenFile, pane: PaneId) -> Option<&ViewportState> {
     file.pane_state(pane).map(|pane_state| &pane_state.viewport)
