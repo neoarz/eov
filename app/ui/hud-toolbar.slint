@@ -157,7 +157,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             zoom-in-btn := HudButton {
-                text: "+";
+                icon-source: @image-url("zoom-in.svg");
                 tooltip-text: "Zoom in";
                 clicked => {
                     root.zoom-in();
@@ -165,7 +165,7 @@ export component HudToolbar inherits Rectangle {
             }
 
             zoom-out-btn := HudButton {
-                text: "\u{2212}";
+                icon-source: @image-url("zoom-out.svg");
                 tooltip-text: "Zoom out";
                 clicked => {
                     root.zoom-out();
