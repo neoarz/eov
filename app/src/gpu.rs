@@ -102,12 +102,15 @@ fn apply_deconv(color: vec4<f32>) -> vec4<f32> {
     let rgb = max(color.rgb, vec3<f32>(1.0 / 255.0));
     let od = -log(rgb);
     let od_sum = od.r + od.g + od.b;
-    if od_sum <= 0.15 || od_sum >= 6.0 {
+    let iso = i32(adjustments.deconv_isolated + 0.5);
+    if od_sum <= 0.15 {
+        return color;
+    }
+    if od_sum >= 6.0 && iso == 0 {
         return color;
     }
     let c_h = max(dot(adjustments.deconv_inv_row0.xyz, od), 0.0);
     let c_e = max(dot(adjustments.deconv_inv_row1.xyz, od), 0.0);
-    let iso = i32(adjustments.deconv_isolated + 0.5);
     if iso == 1 {
         // Isolated hematoxylin grayscale
         let v = exp(-c_h);
@@ -283,12 +286,15 @@ fn apply_deconv(color: vec4<f32>) -> vec4<f32> {
     let rgb = max(color.rgb, vec3<f32>(1.0 / 255.0));
     let od = -log(rgb);
     let od_sum = od.r + od.g + od.b;
-    if od_sum <= 0.15 || od_sum >= 6.0 {
+    let iso = i32(adjustments.deconv_isolated + 0.5);
+    if od_sum <= 0.15 {
+        return color;
+    }
+    if od_sum >= 6.0 && iso == 0 {
         return color;
     }
     let c_h = max(dot(adjustments.deconv_inv_row0.xyz, od), 0.0);
     let c_e = max(dot(adjustments.deconv_inv_row1.xyz, od), 0.0);
-    let iso = i32(adjustments.deconv_isolated + 0.5);
     if iso == 1 {
         let v = exp(-c_h);
         return vec4<f32>(v, v, v, color.a);

@@ -735,8 +735,14 @@ pub fn apply_color_deconvolution(buffer: &mut [u8], params: &ColorDeconvParams) 
 
     for chunk in buffer.chunks_exact_mut(4) {
         let od = rgb_to_od(chunk[0], chunk[1], chunk[2]);
-        if !is_tissue(&od) {
+        let od_sum = od[0] + od[1] + od[2];
+        if od_sum <= OD_THRESHOLD {
             // Background pixels pass through unchanged.
+            continue;
+        }
+        if od_sum >= OD_THRESHOLD_HIGH && isolated <= 0.5 {
+            // Very dark pixels: skip in blended mode only.
+            // In isolated mode, still process to produce grayscale.
             continue;
         }
 

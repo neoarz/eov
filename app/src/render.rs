@@ -95,6 +95,11 @@ struct CpuPaneSnapshot {
     last_render_brightness: f32,
     last_render_contrast: f32,
     last_render_stain_normalization: StainNormalization,
+    last_render_deconv_h_intensity: f32,
+    last_render_deconv_h_visible: bool,
+    last_render_deconv_e_intensity: f32,
+    last_render_deconv_e_visible: bool,
+    last_render_deconv_isolated: crate::state::IsolatedChannel,
     pending_cpu_job_id: Option<u64>,
     needs_settled_cpu_render: bool,
     cached_stain_params: Option<crate::stain::StainNormParams>,
@@ -133,6 +138,11 @@ struct CpuFrameStateUpdate {
     last_render_contrast: f32,
     last_render_sharpness: f32,
     last_render_stain_normalization: StainNormalization,
+    last_render_deconv_h_intensity: f32,
+    last_render_deconv_h_visible: bool,
+    last_render_deconv_e_intensity: f32,
+    last_render_deconv_e_visible: bool,
+    last_render_deconv_isolated: crate::state::IsolatedChannel,
 }
 
 struct CpuPaneExecution {
@@ -731,6 +741,11 @@ fn collect_cpu_frame_snapshot(
             last_render_brightness,
             last_render_contrast,
             last_render_stain_normalization,
+            last_render_deconv_h_intensity,
+            last_render_deconv_h_visible,
+            last_render_deconv_e_intensity,
+            last_render_deconv_e_visible,
+            last_render_deconv_isolated,
             pending_cpu_job_id,
             needs_settled_cpu_render,
             cached_stain_params,
@@ -769,6 +784,11 @@ fn collect_cpu_frame_snapshot(
                     pane_state.last_render_brightness,
                     pane_state.last_render_contrast,
                     pane_state.last_render_stain_normalization,
+                    pane_state.last_render_deconv_h_intensity,
+                    pane_state.last_render_deconv_h_visible,
+                    pane_state.last_render_deconv_e_intensity,
+                    pane_state.last_render_deconv_e_visible,
+                    pane_state.last_render_deconv_isolated,
                     pane_state.pending_cpu_job_id,
                     pane_state.needs_settled_cpu_render,
                     pane_state.cached_stain_params,
@@ -832,6 +852,11 @@ fn collect_cpu_frame_snapshot(
             last_render_brightness,
             last_render_contrast,
             last_render_stain_normalization,
+            last_render_deconv_h_intensity,
+            last_render_deconv_h_visible,
+            last_render_deconv_e_intensity,
+            last_render_deconv_e_visible,
+            last_render_deconv_isolated,
             pending_cpu_job_id,
             needs_settled_cpu_render,
             cached_stain_params,
@@ -874,6 +899,16 @@ fn apply_cpu_render_commit(state: &Arc<RwLock<AppState>>, execution: CpuPaneExec
             pane_state.last_render_sharpness = frame_update.last_render_sharpness;
             pane_state.last_render_stain_normalization =
                 frame_update.last_render_stain_normalization;
+            pane_state.last_render_deconv_h_intensity =
+                frame_update.last_render_deconv_h_intensity;
+            pane_state.last_render_deconv_h_visible =
+                frame_update.last_render_deconv_h_visible;
+            pane_state.last_render_deconv_e_intensity =
+                frame_update.last_render_deconv_e_intensity;
+            pane_state.last_render_deconv_e_visible =
+                frame_update.last_render_deconv_e_visible;
+            pane_state.last_render_deconv_isolated =
+                frame_update.last_render_deconv_isolated;
         }
 
         if let Some(pending_cpu_job_id) = execution.commit.pending_cpu_job_id {
@@ -1036,11 +1071,11 @@ fn render_cpu_pane_from_snapshot(
         brightness: snapshot.last_render_brightness,
         contrast: snapshot.last_render_contrast,
         stain_normalization: snapshot.last_render_stain_normalization,
-        deconv_h_intensity: 1.0,
-        deconv_h_visible: true,
-        deconv_e_intensity: 1.0,
-        deconv_e_visible: true,
-        deconv_isolated: crate::state::IsolatedChannel::None,
+        deconv_h_intensity: snapshot.last_render_deconv_h_intensity,
+        deconv_h_visible: snapshot.last_render_deconv_h_visible,
+        deconv_e_intensity: snapshot.last_render_deconv_e_intensity,
+        deconv_e_visible: snapshot.last_render_deconv_e_visible,
+        deconv_isolated: snapshot.last_render_deconv_isolated,
     });
 
     let mut commit = CpuRenderCommit {
@@ -1104,6 +1139,11 @@ fn render_cpu_pane_from_snapshot(
         last_render_contrast: snapshot.hud_contrast,
         last_render_sharpness: snapshot.hud_sharpness,
         last_render_stain_normalization: snapshot.hud_stain_normalization,
+        last_render_deconv_h_intensity: snapshot.hud_deconv_h_intensity,
+        last_render_deconv_h_visible: snapshot.hud_deconv_h_visible,
+        last_render_deconv_e_intensity: snapshot.hud_deconv_e_intensity,
+        last_render_deconv_e_visible: snapshot.hud_deconv_e_visible,
+        last_render_deconv_isolated: snapshot.hud_deconv_isolated,
     });
 
     let Some(level_info) = snapshot.tile_manager.wsi().level(level).cloned() else {
