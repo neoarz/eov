@@ -891,38 +891,13 @@ export component ExportDialog inherits Rectangle {
                             value: root.settings.dpi;
                             min-value: 72;
                             max-value: 600;
-                            display-text: "";
+                            display-text: Math.round(root.settings.dpi) + "";
                             changed(v) => {
                                 root.settings.dpi = Math.round(v);
                                 root.settings-changed(root.settings);
                             }
                             released => {
                                 root.notify-settings();
-                            }
-                        }
-
-                        Rectangle {
-                            width: 52px;
-                            height: 26px;
-                            border-radius: 3px;
-                            background: #ffffff10;
-                            border-width: 1px;
-                            border-color: #ffffff1a;
-
-                            dpi-input := TextInput {
-                                x: 4px;
-                                width: parent.width - 8px;
-                                text: root.settings.dpi;
-                                color: #e0e0e0;
-                                font-size: 11px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                input-type: number;
-
-                                accepted => {
-                                    root.settings.dpi = max(72, min(600, Math.round(self.text.to-float())));
-                                    root.notify-settings();
-                                }
                             }
                         }
                     }

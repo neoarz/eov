@@ -11,7 +11,7 @@ export component HomeScreen inherits Rectangle {
     Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        width: 500px;
+        width: 300px;
         height: recent-files.length > 0 ? 480px : 300px;
 
         VerticalLayout {
@@ -150,13 +150,6 @@ export component HomeScreen inherits Rectangle {
 
             Rectangle {
                 height: 24px;
-            }
-
-            Text {
-                text: "Tip: Use scroll wheel to zoom, drag to pan";
-                color: Theme.text-secondary;
-                font-size: 11px;
-                horizontal-alignment: center;
             }
         }
     }

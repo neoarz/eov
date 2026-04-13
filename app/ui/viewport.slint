@@ -61,6 +61,8 @@ export component Viewport inherits Rectangle {
     callback hud-stain-normalization-changed(StainNormalization);
     callback hud-reset-adjustments();
     callback hud-zoom-input(float);
+    callback hud-zoom-in();
+    callback hud-zoom-out();
     callback hud-deconv-h-intensity-changed(float);
     callback hud-deconv-e-intensity-changed(float);
     callback hud-deconv-h-visibility-toggled();
@@ -475,6 +477,12 @@ export component Viewport inherits Rectangle {
         }
         zoom-input(v) => {
             root.hud-zoom-input(v);
+        }
+        zoom-in => {
+            root.hud-zoom-in();
+        }
+        zoom-out => {
+            root.hud-zoom-out();
         }
     }
 

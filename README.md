@@ -80,6 +80,7 @@ Current capabilities include:
 - A calibrated scale bar with automatic unit selection (µm, mm, inches) when microns-per-pixel metadata is available.
 - A minimap thumbnail with viewport navigation and a zoom slider.
 - Basic "Region of Interest" and "Measure Distance" tools.
+- Export Image: right-click the viewport to export the current view as PNG or JPEG with configurable DPI, filtering mode, stain normalization, color deconvolution, and optional measurement/ROI overlays.
 - Various quality of life enhancements expected from modern software packages
 
 ## Screenshots

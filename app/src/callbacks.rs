@@ -1211,66 +1211,6 @@ pub fn setup_callbacks(
         let render_timer = Rc::clone(&render_timer);
         let ui_weak = ui_weak.clone();
 
-        ui.on_frame_requested(move || {
-            {
-                let mut state = state_handle.write();
-                if frame_active_viewport(&mut state) {
-                    state.request_render();
-                }
-            }
-
-            if let Some(ui) = ui_weak.upgrade() {
-                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
-            }
-        });
-    }
-
-    {
-        let state_handle = Arc::clone(&state);
-        let tile_cache = Arc::clone(&tile_cache);
-        let render_timer = Rc::clone(&render_timer);
-        let ui_weak = ui_weak.clone();
-
-        ui.on_zoom_in_requested(move || {
-            {
-                let mut state = state_handle.write();
-                if zoom_active_viewport(&mut state, ACTION_ZOOM_FACTOR) {
-                    state.request_render();
-                }
-            }
-
-            if let Some(ui) = ui_weak.upgrade() {
-                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
-            }
-        });
-    }
-
-    {
-        let state_handle = Arc::clone(&state);
-        let tile_cache = Arc::clone(&tile_cache);
-        let render_timer = Rc::clone(&render_timer);
-        let ui_weak = ui_weak.clone();
-
-        ui.on_zoom_out_requested(move || {
-            {
-                let mut state = state_handle.write();
-                if zoom_active_viewport(&mut state, 1.0 / ACTION_ZOOM_FACTOR) {
-                    state.request_render();
-                }
-            }
-
-            if let Some(ui) = ui_weak.upgrade() {
-                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
-            }
-        });
-    }
-
-    {
-        let state_handle = Arc::clone(&state);
-        let tile_cache = Arc::clone(&tile_cache);
-        let render_timer = Rc::clone(&render_timer);
-        let ui_weak = ui_weak.clone();
-
         ui.on_toggle_minimap_requested(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 toggle_minimap_visibility(&ui, &state_handle);
@@ -2217,6 +2157,46 @@ pub fn setup_callbacks(
                     viewport.zoom_to(value as f64);
                 }
                 state.request_render();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_zoom_in(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if zoom_active_viewport(&mut state, ACTION_ZOOM_FACTOR) {
+                    state.request_render();
+                }
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
+            }
+        });
+    }
+
+    {
+        let state_handle = Arc::clone(&state);
+        let tile_cache = Arc::clone(&tile_cache);
+        let render_timer = Rc::clone(&render_timer);
+        let ui_weak = ui_weak.clone();
+
+        ui.on_hud_zoom_out(move |pane| {
+            {
+                let mut state = state_handle.write();
+                state.set_focused_pane(pane_from_index(pane));
+                if zoom_active_viewport(&mut state, 1.0 / ACTION_ZOOM_FACTOR) {
+                    state.request_render();
+                }
             }
             if let Some(ui) = ui_weak.upgrade() {
                 request_render_loop(&render_timer, &ui.as_weak(), &state_handle, &tile_cache);
