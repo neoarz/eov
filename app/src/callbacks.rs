@@ -1053,13 +1053,12 @@ pub fn setup_callbacks(
         let render_timer = Rc::clone(&render_timer);
         let ui_weak = ui_weak.clone();
 
-        ui.on_viewport_pan(move |dx, dy| {
+        ui.on_viewport_pan(move |x, y| {
             {
                 let mut state = state_handle.write();
                 let mut changed = false;
                 if let Some(viewport) = state.active_viewport_mut() {
-                    viewport.stop();
-                    viewport.viewport.pan(dx as f64, dy as f64);
+                    viewport.drag_to(x as f64, y as f64);
                     changed = true;
                 }
                 if changed {

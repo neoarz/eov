@@ -333,8 +333,6 @@ export component Viewport inherits Rectangle {
         width: 100%;
         height: parent.height;
 
-        property <length> drag-start-x;
-        property <length> drag-start-y;
         property <bool> is-dragging: false;
         property <bool> is-tool-dragging: false;
 
@@ -348,8 +346,6 @@ export component Viewport inherits Rectangle {
             }
             if e.kind == PointerEventKind.down && (e.button == PointerEventButton.right || e.button == PointerEventButton.middle) {
                 self.is-dragging = true;
-                self.drag-start-x = self.mouse-x;
-                self.drag-start-y = self.mouse-y;
                 root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
             } else if e.kind == PointerEventKind.up && (e.button == PointerEventButton.right || e.button == PointerEventButton.middle) {
                 self.is-dragging = false;
@@ -357,8 +353,6 @@ export component Viewport inherits Rectangle {
             } else if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
                 if root.current-tool == ToolType.navigate {
                     self.is-dragging = true;
-                    self.drag-start-x = self.mouse-x;
-                    self.drag-start-y = self.mouse-y;
                     root.start-pan(self.mouse-x / 1px, self.mouse-y / 1px);
                 } else {
                     self.is-tool-dragging = true;
@@ -374,11 +368,7 @@ export component Viewport inherits Rectangle {
                 }
             } else if e.kind == PointerEventKind.move {
                 if self.is-dragging {
-                    let dx = (self.mouse-x - self.drag-start-x) / 1px;
-                    let dy = (self.mouse-y - self.drag-start-y) / 1px;
-                    self.drag-start-x = self.mouse-x;
-                    self.drag-start-y = self.mouse-y;
-                    root.pan(dx, dy);
+                    root.pan(self.mouse-x / 1px, self.mouse-y / 1px);
                 } else if self.is-tool-dragging || root.current-tool != ToolType.navigate {
                     root.tool-mouse-move(self.mouse-x / 1px, self.mouse-y / 1px);
                 }

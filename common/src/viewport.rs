@@ -418,6 +418,14 @@ impl ViewportState {
                 self.viewport
                     .pan(current_velocity.x * dt, current_velocity.y * dt);
 
+                // If a zoom animation is also running, update its anchor so the
+                // zoom tracks the inertia-displaced viewport instead of fighting it.
+                if self.zoom_start_time.is_some() {
+                    self.zoom_anchor_image = self
+                        .viewport
+                        .screen_to_image(self.zoom_anchor_screen.x, self.zoom_anchor_screen.y);
+                }
+
                 is_animating = true;
                 trace!("Pan inertia: t={:.2}, velocity={:?}", t, current_velocity);
             } else {
