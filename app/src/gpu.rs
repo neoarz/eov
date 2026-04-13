@@ -352,6 +352,16 @@ struct Vertex {
     fine_tex_size: [f32; 2],
 }
 
+/// Parameters for building a tile quad's vertices.
+struct QuadParams {
+    viewport_size: (u32, u32),
+    fine_layer: i32,
+    coarse_layer: i32,
+    fine_size: (u32, u32),
+    coarse_size: (u32, u32),
+    layer_size: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Tile texture array — all tiles live in layers of a single 2D-array texture.
 // ---------------------------------------------------------------------------
@@ -759,7 +769,7 @@ impl GpuRenderer {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[vertex_layout.clone()],
+                buffers: std::slice::from_ref(&vertex_layout),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -1007,15 +1017,14 @@ impl GpuRenderer {
                 array_ls,
                 vertices: quad_vertices(
                     draw,
-                    frame.width,
-                    frame.height,
-                    fine_layer as i32,
-                    coarse_layer as i32,
-                    fine_w,
-                    fine_h,
-                    coarse_w,
-                    coarse_h,
-                    array_ls,
+                    &QuadParams {
+                        viewport_size: (frame.width, frame.height),
+                        fine_layer: fine_layer as i32,
+                        coarse_layer: coarse_layer as i32,
+                        fine_size: (fine_w, fine_h),
+                        coarse_size: (coarse_w, coarse_h),
+                        layer_size: array_ls,
+                    },
                 ),
             });
         }
@@ -1065,11 +1074,11 @@ impl GpuRenderer {
         for (i, b) in batches.iter().enumerate() {
             let start = (i * 6) as u32;
             let end = start + 6;
-            if let Some(last) = draw_ranges.last_mut() {
-                if last.0 == b.array_ls {
-                    last.1.end = end;
-                    continue;
-                }
+            if let Some(last) = draw_ranges.last_mut()
+                && last.0 == b.array_ls
+            {
+                last.1.end = end;
+                continue;
             }
             draw_ranges.push((b.array_ls, start..end));
         }
@@ -1141,20 +1150,14 @@ impl GpuRenderer {
 // ---------------------------------------------------------------------------
 
 /// Build the 6 vertices (2 triangles) for a single tile quad.
-fn quad_vertices(
-    draw: &TileDraw,
-    viewport_width: u32,
-    viewport_height: u32,
-    fine_layer: i32,
-    coarse_layer: i32,
-    fine_w: u32,
-    fine_h: u32,
-    coarse_w: u32,
-    coarse_h: u32,
-    layer_size: u32,
-) -> [Vertex; 6] {
-    let vw = viewport_width.max(1) as f32;
-    let vh = viewport_height.max(1) as f32;
+fn quad_vertices(draw: &TileDraw, params: &QuadParams) -> [Vertex; 6] {
+    let vw = params.viewport_size.0.max(1) as f32;
+    let vh = params.viewport_size.1.max(1) as f32;
+    let fine_layer = params.fine_layer;
+    let coarse_layer = params.coarse_layer;
+    let (fine_w, fine_h) = params.fine_size;
+    let (coarse_w, coarse_h) = params.coarse_size;
+    let layer_size = params.layer_size;
     let x0 = draw.screen_x as f32;
     let y0 = draw.screen_y as f32;
     let x1 = (draw.screen_x + draw.screen_w) as f32;
