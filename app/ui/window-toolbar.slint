@@ -57,188 +57,192 @@ export component WindowToolbar inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding: 6px;
-        spacing: 4px;
+        spacing: 0px;
 
-        Rectangle {
-            visible: root.use-native-window-controls;
-            width: root.use-native-window-controls ? 74px : 0px;
-        }
-
-        action-cluster := HorizontalLayout {
+        HorizontalLayout {
+            padding: 6px;
             spacing: 4px;
-
-            open-button := OpenFileToolButton {
-                tooltip-text: "Open file (right-click for recent)";
-                clicked => {
-                    root.open-file-requested();
-                }
-                secondary-clicked(x, y) => {
-                    root.open-recent-menu-requested(x, y);
-                }
-            }
-
-            minimap-button := MinimapToolButton {
-                tooltip-text: "Toggle minimap";
-                is-active: root.show-minimap;
-                clicked => {
-                    root.toggle-minimap-requested();
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 1px;
-                    height: 24px;
-                    background: Theme.border;
-                }
-            }
-
-            navigate-button := SvgToolButton {
-                icon-source: @image-url("icons/navigate.svg");
-                tooltip-text: "Navigate (Pan)";
-                is-active: root.current-tool == ToolType.navigate;
-                clicked => {
-                    root.tool-selected(ToolType.navigate);
-                }
-            }
-
-            roi-button := RoiToolButton {
-                tooltip-text: "Region of interest";
-                is-active: root.current-tool == ToolType.region-of-interest;
-                clicked => {
-                    root.tool-selected(ToolType.region-of-interest);
-                }
-            }
-
-            measure-button := SvgToolButton {
-                icon-source: @image-url("icons/measure.svg");
-                tooltip-text: "Measure distance";
-                is-active: root.current-tool == ToolType.measure-distance;
-                clicked => {
-                    root.tool-selected(ToolType.measure-distance);
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 1px;
-                    height: 24px;
-                    background: Theme.border;
-                }
-            }
-
-            cpu-button := ToolButton {
-                width: 40px;
-                icon: "CPU";
-                tooltip-text: "Use CPU renderer";
-                is-active: root.render-mode == RenderMode.cpu;
-                clicked => {
-                    root.render-backend-selected(RenderMode.cpu);
-                }
-            }
-
-            gpu-button := ToolButton {
-                width: 40px;
-                icon: "GPU";
-                tooltip-text: root.gpu-rendering-available ? "Use GPU renderer" : "GPU renderer unavailable";
-                enabled: root.gpu-rendering-available;
-                is-active: root.render-mode == RenderMode.gpu;
-                clicked => {
-                    if root.gpu-rendering-available {
-                        root.render-backend-selected(RenderMode.gpu);
-                    }
-                }
-            }
-
-            metadata-button := MetadataToolButton {
-                tooltip-text: "Toggle metadata HUD";
-                is-active: root.show-metadata;
-                clicked => {
-                    root.toggle-metadata-requested();
-                }
-            }
-
-            dataset-export-button := SvgToolButton {
-                icon-source: @image-url("icons/dataset.svg");
-                tooltip-text: "Export Dataset";
-                clicked => {
-                    root.dataset-export-requested();
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 1px;
-                    height: 24px;
-                    background: Theme.border;
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                filter-combo-area := Rectangle {
-                    width: 82px;
-                    height: 26px;
-                    border-radius: 3px;
-                    background: filter-combo-touch.has-hover ? Theme.surface-hover : Theme.surface;
-                    border-width: 1px;
-                    border-color: root.filter-popup-visible ? Theme.accent : Theme.border;
-
-                    filter-combo-touch := TouchArea {
-                        clicked => {
-                            root.filter-popup-visible = !root.filter-popup-visible;
-                        }
-                    }
-
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 6px;
-                        spacing: 4px;
-
-                        Text {
-                            text: root.filtering-mode == FilteringMode.bilinear ? "Bilinear" : root.filtering-mode == FilteringMode.trilinear ? "Trilinear" : "Lanczos-3";
-                            color: Theme.text-primary;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                            overflow: elide;
-                        }
-
-                        Text {
-                            text: "▾";
-                            color: Theme.text-secondary;
-                            font-size: 10px;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-            }
-        }
-
-        Rectangle {
             horizontal-stretch: 1;
-        }
 
-        VerticalLayout {
-            alignment: center;
-            Image {
-                source: @image-url("icons/logo.png");
-                height: 20px;
-                image-fit: contain;
+            Rectangle {
+                visible: root.use-native-window-controls;
+                width: root.use-native-window-controls ? 74px : 0px;
             }
-        }
 
-        Rectangle {
-            horizontal-stretch: 1;
+            action-cluster := HorizontalLayout {
+                spacing: 4px;
+
+                open-button := OpenFileToolButton {
+                    tooltip-text: "Open file (right-click for recent)";
+                    clicked => {
+                        root.open-file-requested();
+                    }
+                    secondary-clicked(x, y) => {
+                        root.open-recent-menu-requested(x, y);
+                    }
+                }
+
+                minimap-button := MinimapToolButton {
+                    tooltip-text: "Toggle minimap";
+                    is-active: root.show-minimap;
+                    clicked => {
+                        root.toggle-minimap-requested();
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 1px;
+                        height: 24px;
+                        background: Theme.border;
+                    }
+                }
+
+                navigate-button := SvgToolButton {
+                    icon-source: @image-url("icons/navigate.svg");
+                    tooltip-text: "Navigate (Pan)";
+                    is-active: root.current-tool == ToolType.navigate;
+                    clicked => {
+                        root.tool-selected(ToolType.navigate);
+                    }
+                }
+
+                roi-button := RoiToolButton {
+                    tooltip-text: "Region of interest";
+                    is-active: root.current-tool == ToolType.region-of-interest;
+                    clicked => {
+                        root.tool-selected(ToolType.region-of-interest);
+                    }
+                }
+
+                measure-button := SvgToolButton {
+                    icon-source: @image-url("icons/measure.svg");
+                    tooltip-text: "Measure distance";
+                    is-active: root.current-tool == ToolType.measure-distance;
+                    clicked => {
+                        root.tool-selected(ToolType.measure-distance);
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 1px;
+                        height: 24px;
+                        background: Theme.border;
+                    }
+                }
+
+                cpu-button := ToolButton {
+                    width: 40px;
+                    icon: "CPU";
+                    tooltip-text: "Use CPU renderer";
+                    is-active: root.render-mode == RenderMode.cpu;
+                    clicked => {
+                        root.render-backend-selected(RenderMode.cpu);
+                    }
+                }
+
+                gpu-button := ToolButton {
+                    width: 40px;
+                    icon: "GPU";
+                    tooltip-text: root.gpu-rendering-available ? "Use GPU renderer" : "GPU renderer unavailable";
+                    enabled: root.gpu-rendering-available;
+                    is-active: root.render-mode == RenderMode.gpu;
+                    clicked => {
+                        if root.gpu-rendering-available {
+                            root.render-backend-selected(RenderMode.gpu);
+                        }
+                    }
+                }
+
+                metadata-button := MetadataToolButton {
+                    tooltip-text: "Toggle metadata HUD";
+                    is-active: root.show-metadata;
+                    clicked => {
+                        root.toggle-metadata-requested();
+                    }
+                }
+
+                dataset-export-button := SvgToolButton {
+                    icon-source: @image-url("icons/dataset.svg");
+                    tooltip-text: "Export Dataset";
+                    clicked => {
+                        root.dataset-export-requested();
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 1px;
+                        height: 24px;
+                        background: Theme.border;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    filter-combo-area := Rectangle {
+                        width: 82px;
+                        height: 26px;
+                        border-radius: 3px;
+                        background: filter-combo-touch.has-hover ? Theme.surface-hover : Theme.surface;
+                        border-width: 1px;
+                        border-color: root.filter-popup-visible ? Theme.accent : Theme.border;
+
+                        filter-combo-touch := TouchArea {
+                            clicked => {
+                                root.filter-popup-visible = !root.filter-popup-visible;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 4px;
+
+                            Text {
+                                text: root.filtering-mode == FilteringMode.bilinear ? "Bilinear" : root.filtering-mode == FilteringMode.trilinear ? "Trilinear" : "Lanczos-3";
+                                color: Theme.text-primary;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: "▾";
+                                color: Theme.text-secondary;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Image {
+                    source: @image-url("icons/logo.png");
+                    height: 20px;
+                    image-fit: contain;
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
         }
 
         minimize-control := Rectangle {
             width: 46px;
-            height: 32px;
             visible: !root.use-native-window-controls;
             background: minimize-touch.has-hover ? Theme.surface-hover : transparent;
             border-radius: 0px;
@@ -260,7 +264,6 @@ export component WindowToolbar inherits Rectangle {
 
         maximize-control := Rectangle {
             width: 46px;
-            height: 32px;
             visible: !root.use-native-window-controls;
             background: maximize-touch.has-hover ? Theme.surface-hover : transparent;
             border-radius: 0px;
@@ -282,7 +285,6 @@ export component WindowToolbar inherits Rectangle {
 
         close-control := Rectangle {
             width: 46px;
-            height: 32px;
             visible: !root.use-native-window-controls;
             background: close-win-touch.has-hover ? #e81123 : transparent;
             border-radius: 0px;
