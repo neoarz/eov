@@ -24,7 +24,8 @@ pub struct DatasetPatchesConfig {
     pub tile_size: u32,
     /// Step size between tile origins in pixels.
     pub stride: u32,
-    /// Optional metadata output format.
+    /// Optional metadata output format. If `None`, both CSV and JSON are written.
+    /// If `Some`, only the specified format is written.
     pub metadata_format: Option<MetadataFormat>,
     /// Number of worker threads for parallel tile extraction.
     /// Each thread opens its own file handle for maximum throughput.

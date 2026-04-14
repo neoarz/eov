@@ -54,8 +54,8 @@ pub struct DatasetPatchesReport {
     pub total_tiles: u64,
     /// Total tiles skipped because they were mostly white.
     pub total_tiles_skipped_white: u64,
-    /// Path to the metadata file, if one was written.
-    pub metadata_path: Option<PathBuf>,
+    /// Paths to the metadata files that were written (CSV and JSON).
+    pub metadata_paths: Vec<PathBuf>,
     /// Per-slide details.
     pub slides: Vec<SlideReport>,
     /// Input-level errors (nonexistent paths, unsupported extensions, etc.).
@@ -205,7 +205,6 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
             pool.current_num_threads(),
         );
 
-        let collect_metadata = config.metadata_format.is_some();
         let tile_size = config.tile_size;
         let output_dir = &config.output_dir;
         let white_threshold = config.white_threshold;
@@ -268,23 +267,21 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
 
                 slide_tile_count.fetch_add(1, Ordering::Relaxed);
 
-                if collect_metadata {
-                    tile_records.lock().unwrap().push(TileRecord {
-                        slide_path: slide_path.display().to_string(),
-                        slide_stem: stem.clone(),
-                        tile_path: rel_path,
-                        x: coord.x,
-                        y: coord.y,
-                        tile_size,
-                        width: tile_size,
-                        height: tile_size,
-                        slide_width: props.width,
-                        slide_height: props.height,
-                        level: 0,
-                        mpp_x: props.mpp_x,
-                        mpp_y: props.mpp_y,
-                    });
-                }
+                tile_records.lock().unwrap().push(TileRecord {
+                    slide_path: slide_path.display().to_string(),
+                    slide_stem: stem.clone(),
+                    tile_path: rel_path,
+                    x: coord.x,
+                    y: coord.y,
+                    tile_size,
+                    width: tile_size,
+                    height: tile_size,
+                    slide_width: props.width,
+                    slide_height: props.height,
+                    level: 0,
+                    mpp_x: props.mpp_x,
+                    mpp_y: props.mpp_y,
+                });
             });
         });
 
@@ -312,39 +309,43 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
     }
 
     // --- 7. Write metadata ---
-    let metadata_path = match config.metadata_format {
-        Some(MetadataFormat::Csv) => {
-            let p = config.output_dir.join("metadata.csv");
-            metadata::write_csv(&all_records, &p).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    e.kind(),
-                    format!("failed to write metadata CSV {}: {e}", p.display()),
-                ))
-            })?;
-            info!(
-                "Wrote {} tile records to {}",
-                all_records.len(),
-                p.display()
-            );
-            Some(p)
-        }
-        Some(MetadataFormat::Json) => {
-            let p = config.output_dir.join("metadata.json");
-            metadata::write_json(&all_records, &p).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    e.kind(),
-                    format!("failed to write metadata JSON {}: {e}", p.display()),
-                ))
-            })?;
-            info!(
-                "Wrote {} tile records to {}",
-                all_records.len(),
-                p.display()
-            );
-            Some(p)
-        }
-        None => None,
-    };
+    let mut metadata_paths = Vec::new();
+    let write_csv =
+        config.metadata_format.is_none() || config.metadata_format == Some(MetadataFormat::Csv);
+    let write_json =
+        config.metadata_format.is_none() || config.metadata_format == Some(MetadataFormat::Json);
+
+    if write_csv {
+        let csv_path = config.output_dir.join("metadata.csv");
+        metadata::write_csv(&all_records, &csv_path).map_err(|e| {
+            crate::Error::Io(std::io::Error::new(
+                e.kind(),
+                format!("failed to write metadata CSV {}: {e}", csv_path.display()),
+            ))
+        })?;
+        info!(
+            "Wrote {} tile records to {}",
+            all_records.len(),
+            csv_path.display()
+        );
+        metadata_paths.push(csv_path);
+    }
+
+    if write_json {
+        let json_path = config.output_dir.join("metadata.json");
+        metadata::write_json(&all_records, &json_path).map_err(|e| {
+            crate::Error::Io(std::io::Error::new(
+                e.kind(),
+                format!("failed to write metadata JSON {}: {e}", json_path.display()),
+            ))
+        })?;
+        info!(
+            "Wrote {} tile records to {}",
+            all_records.len(),
+            json_path.display()
+        );
+        metadata_paths.push(json_path);
+    }
 
     let processed = slide_reports.iter().filter(|r| r.skipped.is_none()).count();
     let skipped = slide_reports.iter().filter(|r| r.skipped.is_some()).count();
@@ -367,7 +368,7 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
         skipped_slides: skipped,
         total_tiles,
         total_tiles_skipped_white: total_white,
-        metadata_path,
+        metadata_paths,
         slides: slide_reports,
         input_errors,
     })
@@ -475,7 +476,6 @@ pub fn run_dataset_patches_with_progress(
             ))
         })?;
 
-        let collect_metadata = config.metadata_format.is_some();
         let tile_size = config.tile_size;
         let output_dir = &config.output_dir;
         let white_threshold = config.white_threshold;
@@ -536,23 +536,21 @@ pub fn run_dataset_patches_with_progress(
                 slide_tile_count.fetch_add(1, Ordering::Relaxed);
                 progress_tiles.fetch_add(1, Ordering::Relaxed);
 
-                if collect_metadata {
-                    tile_records.lock().unwrap().push(TileRecord {
-                        slide_path: slide_path.display().to_string(),
-                        slide_stem: stem.clone(),
-                        tile_path: rel_path,
-                        x: coord.x,
-                        y: coord.y,
-                        tile_size,
-                        width: tile_size,
-                        height: tile_size,
-                        slide_width: props.width,
-                        slide_height: props.height,
-                        level: 0,
-                        mpp_x: props.mpp_x,
-                        mpp_y: props.mpp_y,
-                    });
-                }
+                tile_records.lock().unwrap().push(TileRecord {
+                    slide_path: slide_path.display().to_string(),
+                    slide_stem: stem.clone(),
+                    tile_path: rel_path,
+                    x: coord.x,
+                    y: coord.y,
+                    tile_size,
+                    width: tile_size,
+                    height: tile_size,
+                    slide_width: props.width,
+                    slide_height: props.height,
+                    level: 0,
+                    mpp_x: props.mpp_x,
+                    mpp_y: props.mpp_y,
+                });
             });
         });
 
@@ -578,32 +576,38 @@ pub fn run_dataset_patches_with_progress(
         });
     }
 
-    let metadata_path = if !cancel.load(Ordering::Relaxed) {
-        match config.metadata_format {
-            Some(MetadataFormat::Csv) => {
-                let p = config.output_dir.join("metadata.csv");
-                metadata::write_csv(&all_records, &p).map_err(|e| {
-                    crate::Error::Io(std::io::Error::new(
-                        e.kind(),
-                        format!("failed to write metadata CSV {}: {e}", p.display()),
-                    ))
-                })?;
-                Some(p)
-            }
-            Some(MetadataFormat::Json) => {
-                let p = config.output_dir.join("metadata.json");
-                metadata::write_json(&all_records, &p).map_err(|e| {
-                    crate::Error::Io(std::io::Error::new(
-                        e.kind(),
-                        format!("failed to write metadata JSON {}: {e}", p.display()),
-                    ))
-                })?;
-                Some(p)
-            }
-            None => None,
+    let metadata_paths = if !cancel.load(Ordering::Relaxed) {
+        let mut paths = Vec::new();
+        let write_csv =
+            config.metadata_format.is_none() || config.metadata_format == Some(MetadataFormat::Csv);
+        let write_json = config.metadata_format.is_none()
+            || config.metadata_format == Some(MetadataFormat::Json);
+
+        if write_csv {
+            let csv_path = config.output_dir.join("metadata.csv");
+            metadata::write_csv(&all_records, &csv_path).map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to write metadata CSV {}: {e}", csv_path.display()),
+                ))
+            })?;
+            paths.push(csv_path);
         }
+
+        if write_json {
+            let json_path = config.output_dir.join("metadata.json");
+            metadata::write_json(&all_records, &json_path).map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to write metadata JSON {}: {e}", json_path.display()),
+                ))
+            })?;
+            paths.push(json_path);
+        }
+
+        paths
     } else {
-        None
+        Vec::new()
     };
 
     let processed = slide_reports.iter().filter(|r| r.skipped.is_none()).count();
@@ -617,7 +621,7 @@ pub fn run_dataset_patches_with_progress(
         skipped_slides: skipped,
         total_tiles,
         total_tiles_skipped_white: total_white,
-        metadata_path,
+        metadata_paths,
         slides: slide_reports,
         input_errors,
     })

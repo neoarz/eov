@@ -121,8 +121,10 @@ enum DatasetCommand {
         <slide-stem>_x000000_y000000_s512.png\n          \
         <slide-stem>_x000512_y000000_s512.png\n          \
         ...\n    \
-      metadata.csv   (if --metadata csv)\n    \
-      metadata.json  (if --metadata json)")]
+      metadata.csv\n    \
+      metadata.json\n\n  \
+  If --metadata is specified, only that format is written.\n  \
+  If omitted, both CSV and JSON are written.")]
     Patches {
         /// One or more slide files or directories containing slides.
         /// Directories are searched recursively for supported slide formats.
@@ -141,8 +143,8 @@ enum DatasetCommand {
         #[arg(long, required = true, value_parser = clap::value_parser!(u32).range(1..))]
         stride: u32,
 
-        /// Emit per-tile metadata in the given format.
-        /// If omitted, no metadata file is written.
+        /// Emit per-tile metadata in only the given format (csv or json).
+        /// If omitted, both CSV and JSON metadata files are written.
         #[arg(long, value_enum)]
         metadata: Option<CliMetadataFormat>,
 
@@ -572,7 +574,7 @@ fn run_dataset_patches_cli(config: &DatasetPatchesConfig) -> Result<()> {
         report.total_tiles,
         report.total_tiles_skipped_white,
     );
-    if let Some(meta) = &report.metadata_path {
+    for meta in &report.metadata_paths {
         println!("Metadata: {}", meta.display());
     }
 
