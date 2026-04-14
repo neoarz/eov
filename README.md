@@ -61,6 +61,8 @@ To make testing easier, here are a few (relatively) small WSI files that can be 
 - [C3L-00004-21.svs](https://cptac.nyc3.digitaloceanspaces.com/images/CPTAC-CCRCC/C3L-00004-21.svs) (169MB)
 - [C3L-00088-22.svs](https://cptac.nyc3.digitaloceanspaces.com/images/CPTAC-CCRCC/C3L-00088-22.svs) (322MB)
 
+Refer to the [data appropriation guide](./data-guide.md) for details on how to bulk download WSI files from various datasets.
+
 ## Overview
 
 eov opens pyramid-based whole-slide image files through OpenSlide and presents them in a desktop viewer designed for fast inspection.
@@ -132,9 +134,8 @@ Both methods share a common normalization pipeline: RGB → optical density conv
 
 eov supports real-time H&E color deconvolution, which separates a histology image into its constituent hematoxylin and eosin stain channels using the Beer–Lambert optical density model ([Ruifrok & Johnston, 2001](https://pubmed.ncbi.nlm.nih.gov/11531144/)). Controls are available in the HUD settings panel:
 
-- **Channel visibility**: toggle hematoxylin and eosin channels on or off independently.
-- **Channel isolation**: view a single stain channel in isolation to inspect hematoxylin (nuclei) or eosin (cytoplasm/stroma) contributions separately.
 - **Intensity control**: adjust per-channel stain intensity to enhance or suppress individual components.
+- **Channel isolation**: view a single stain channel in isolation to inspect hematoxylin (nuclei) or eosin (cytoplasm/stroma) contributions separately.
 
 When stain normalization is active, the deconvolution reuses the slide-specific stain matrix estimated by the normalization step, so channel separation reflects the actual stain vectors of the current slide. Otherwise the default Ruifrok & Johnston reference matrix is used. Both CPU and GPU backends are supported.
 
