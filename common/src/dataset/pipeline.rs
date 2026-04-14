@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -103,9 +103,9 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
         .thread_name(|i| format!("ds-patch-{i}"))
         .build()
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(
-                format!("failed to create thread pool: {e}"),
-            ))
+            crate::Error::Io(std::io::Error::other(format!(
+                "failed to create thread pool: {e}"
+            )))
         })?;
 
     // --- 1. Resolve inputs ---
@@ -163,12 +163,8 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
         drop(wsi); // closed; workers will each open their own handle
 
         // Generate patch coordinates.
-        let coords = generate_patch_coords(
-            props.width,
-            props.height,
-            config.tile_size,
-            config.stride,
-        );
+        let coords =
+            generate_patch_coords(props.width, props.height, config.tile_size, config.stride);
 
         if coords.is_empty() {
             info!(
@@ -241,13 +237,7 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
                         }
                     }
                     let wsi = slot.as_ref().unwrap();
-                    wsi.read_region(
-                        coord.x as i64,
-                        coord.y as i64,
-                        0,
-                        tile_size,
-                        tile_size,
-                    )
+                    wsi.read_region(coord.x as i64, coord.y as i64, 0, tile_size, tile_size)
                 });
 
                 let data = match read_result {
@@ -259,22 +249,20 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
                 };
 
                 // Skip tiles that are almost completely white.
-                if let Some(thresh) = white_threshold {
-                    if output::is_tile_mostly_white(&data, thresh) {
-                        slide_white_count.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
+                if let Some(thresh) = white_threshold
+                    && output::is_tile_mostly_white(&data, thresh)
+                {
+                    slide_white_count.fetch_add(1, Ordering::Relaxed);
+                    return;
                 }
 
                 let rel_path = output::tile_relative_path(&stem, coord.x, coord.y, tile_size);
                 let abs_path = output_dir.join(&rel_path);
 
                 if let Err(e) = output::write_tile_png(&abs_path, &data, tile_size, tile_size) {
-                    *first_error.lock().unwrap() = Some(crate::Error::Io(
-                        std::io::Error::other(
-                            format!("failed to write tile {}: {e}", abs_path.display()),
-                        ),
-                    ));
+                    *first_error.lock().unwrap() = Some(crate::Error::Io(std::io::Error::other(
+                        format!("failed to write tile {}: {e}", abs_path.display()),
+                    )));
                     return;
                 }
 
@@ -333,7 +321,11 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
                     format!("failed to write metadata CSV {}: {e}", p.display()),
                 ))
             })?;
-            info!("Wrote {} tile records to {}", all_records.len(), p.display());
+            info!(
+                "Wrote {} tile records to {}",
+                all_records.len(),
+                p.display()
+            );
             Some(p)
         }
         Some(MetadataFormat::Json) => {
@@ -344,16 +336,17 @@ pub fn run_dataset_patches(config: &DatasetPatchesConfig) -> crate::Result<Datas
                     format!("failed to write metadata JSON {}: {e}", p.display()),
                 ))
             })?;
-            info!("Wrote {} tile records to {}", all_records.len(), p.display());
+            info!(
+                "Wrote {} tile records to {}",
+                all_records.len(),
+                p.display()
+            );
             Some(p)
         }
         None => None,
     };
 
-    let processed = slide_reports
-        .iter()
-        .filter(|r| r.skipped.is_none())
-        .count();
+    let processed = slide_reports.iter().filter(|r| r.skipped.is_none()).count();
     let skipped = slide_reports.iter().filter(|r| r.skipped.is_some()).count();
 
     let total_white: u64 = slide_reports.iter().map(|r| r.tiles_skipped_white).sum();
@@ -453,12 +446,8 @@ pub fn run_dataset_patches_with_progress(
         let props = wsi.properties().clone();
         drop(wsi);
 
-        let coords = generate_patch_coords(
-            props.width,
-            props.height,
-            config.tile_size,
-            config.stride,
-        );
+        let coords =
+            generate_patch_coords(props.width, props.height, config.tile_size, config.stride);
 
         if coords.is_empty() {
             slide_reports.push(SlideReport {
@@ -526,12 +515,12 @@ pub fn run_dataset_patches_with_progress(
                 };
 
                 // Skip tiles that are almost completely white.
-                if let Some(thresh) = white_threshold {
-                    if output::is_tile_mostly_white(&data, thresh) {
-                        slide_white_count.fetch_add(1, Ordering::Relaxed);
-                        progress_tiles.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
+                if let Some(thresh) = white_threshold
+                    && output::is_tile_mostly_white(&data, thresh)
+                {
+                    slide_white_count.fetch_add(1, Ordering::Relaxed);
+                    progress_tiles.fetch_add(1, Ordering::Relaxed);
+                    return;
                 }
 
                 let rel_path = output::tile_relative_path(&stem, coord.x, coord.y, tile_size);

@@ -441,8 +441,8 @@ pub(crate) fn maybe_run_cli_command(launch_options: &LaunchOptions) -> Result<bo
 }
 
 fn run_dataset_patches_cli(config: &DatasetPatchesConfig) -> Result<()> {
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     let cancel = Arc::new(AtomicBool::new(false));
     let progress_tiles = Arc::new(AtomicU64::new(0));
@@ -515,12 +515,13 @@ fn run_dataset_patches_cli(config: &DatasetPatchesConfig) -> Result<()> {
     pb.set_position(done);
     pb.finish_and_clear();
 
-    let report = handle
-        .join()
-        .expect("dataset-patches thread panicked")?;
+    let report = handle.join().expect("dataset-patches thread panicked")?;
 
     if cancel.load(Ordering::Relaxed) {
-        eprintln!("Export cancelled. {} tile(s) were written before cancellation.", report.total_tiles);
+        eprintln!(
+            "Export cancelled. {} tile(s) were written before cancellation.",
+            report.total_tiles
+        );
         return Ok(());
     }
 
@@ -566,19 +567,21 @@ fn run_dataset_patches_cli(config: &DatasetPatchesConfig) -> Result<()> {
     println!();
     println!(
         "Done: {} slide(s) processed, {} skipped, {} tile(s) written, {} tile(s) skipped (white)",
-        report.processed_slides, report.skipped_slides, report.total_tiles, report.total_tiles_skipped_white,
+        report.processed_slides,
+        report.skipped_slides,
+        report.total_tiles,
+        report.total_tiles_skipped_white,
     );
     if let Some(meta) = &report.metadata_path {
         println!("Metadata: {}", meta.display());
     }
 
     // Non-zero exit if any slides were skipped due to errors.
-    if report.slides.iter().any(|s| {
-        matches!(
-            s.skipped,
-            Some(dataset::SlideSkipReason::OpenError(_))
-        )
-    }) {
+    if report
+        .slides
+        .iter()
+        .any(|s| matches!(s.skipped, Some(dataset::SlideSkipReason::OpenError(_))))
+    {
         bail!(
             "{} slide(s) could not be opened",
             report

@@ -512,10 +512,7 @@ export component DatasetExportProgressDialog inherits Rectangle {
     property <string> slide-text: progress.total-slides > 0 ? "File " + progress.current-slide + "/" + progress.total-slides : "";
     property <string> tiles-text: progress.tiles-exported + " tiles exported";
     property <float> fraction: progress.total-tiles-expected > 0 ? progress.tiles-exported / progress.total-tiles-expected : 0;
-    property <string> eta-text: progress.estimated-remaining-secs < 0 ? "Estimating..." :
-        progress.estimated-remaining-secs >= 60 ?
-            Math.floor(progress.estimated-remaining-secs / 60) + "m" + Math.round(Math.mod(progress.estimated-remaining-secs, 60)) + "s remaining" :
-            Math.round(progress.estimated-remaining-secs) + "s remaining";
+    property <string> eta-text: progress.estimated-remaining-secs < 0 ? "Estimating..." : progress.estimated-remaining-secs >= 60 ? Math.floor(progress.estimated-remaining-secs / 60) + "m" + Math.round(Math.mod(progress.estimated-remaining-secs, 60)) + "s remaining" : Math.round(progress.estimated-remaining-secs) + "s remaining";
 
     x: 0px;
     y: 0px;

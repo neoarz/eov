@@ -16,10 +16,7 @@ pub fn slide_tiles_dir(output_dir: &Path, slide_stem: &str) -> PathBuf {
 ///
 /// Coordinates are zero-padded to 6 digits for lexical sorting.
 pub fn tile_filename(slide_stem: &str, x: u64, y: u64, tile_size: u32) -> String {
-    format!(
-        "{}_x{:06}_y{:06}_s{}.png",
-        slide_stem, x, y, tile_size
-    )
+    format!("{}_x{:06}_y{:06}_s{}.png", slide_stem, x, y, tile_size)
 }
 
 /// Relative path of a tile image within the dataset root.
@@ -42,9 +39,8 @@ pub fn write_tile_png(
     width: u32,
     height: u32,
 ) -> Result<(), image::ImageError> {
-    let img: ImageBuffer<Rgba<u8>, _> =
-        ImageBuffer::from_raw(width, height, data.to_vec())
-            .expect("buffer size mismatch in write_tile_png");
+    let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, data.to_vec())
+        .expect("buffer size mismatch in write_tile_png");
     img.save(path)
 }
 
@@ -67,7 +63,7 @@ pub fn is_tile_mostly_white(data: &[u8], threshold: f32) -> bool {
         return true;
     }
 
-    let sampled = (total_pixels + SAMPLE_STRIDE - 1) / SAMPLE_STRIDE;
+    let sampled = total_pixels.div_ceil(SAMPLE_STRIDE);
     let mut white_count: u32 = 0;
 
     let mut i = 0;
@@ -117,7 +113,10 @@ mod tests {
 
     #[test]
     fn test_slide_stem() {
-        assert_eq!(slide_stem(Path::new("/data/slides/C3L-00004-21.svs")), "C3L-00004-21");
+        assert_eq!(
+            slide_stem(Path::new("/data/slides/C3L-00004-21.svs")),
+            "C3L-00004-21"
+        );
         assert_eq!(slide_stem(Path::new("relative.tif")), "relative");
     }
 

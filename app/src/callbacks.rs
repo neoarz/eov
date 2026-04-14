@@ -2608,9 +2608,8 @@ pub fn setup_callbacks(
                     .as_any()
                     .downcast_ref::<slint::VecModel<SharedString>>()
                     .map(|m| {
-                        let mut v: Vec<SharedString> = (0..m.row_count())
-                            .map(|i| m.row_data(i).unwrap())
-                            .collect();
+                        let mut v: Vec<SharedString> =
+                            (0..m.row_count()).map(|i| m.row_data(i).unwrap()).collect();
                         for p in &paths {
                             v.push(SharedString::from(p.to_string_lossy().as_ref()));
                         }
@@ -2622,8 +2621,7 @@ pub fn setup_callbacks(
                             .map(|p| SharedString::from(p.to_string_lossy().as_ref()))
                             .collect()
                     });
-                settings.inputs =
-                    slint::ModelRc::from(Rc::new(slint::VecModel::from(model)));
+                settings.inputs = slint::ModelRc::from(Rc::new(slint::VecModel::from(model)));
                 ui.set_dataset_export_settings(settings);
             }
         });
@@ -2642,14 +2640,12 @@ pub fn setup_callbacks(
                 .as_any()
                 .downcast_ref::<slint::VecModel<SharedString>>()
             {
-                let mut v: Vec<SharedString> = (0..m.row_count())
-                    .map(|i| m.row_data(i).unwrap())
-                    .collect();
+                let mut v: Vec<SharedString> =
+                    (0..m.row_count()).map(|i| m.row_data(i).unwrap()).collect();
                 if (idx as usize) < v.len() {
                     v.remove(idx as usize);
                 }
-                settings.inputs =
-                    slint::ModelRc::from(Rc::new(slint::VecModel::from(v)));
+                settings.inputs = slint::ModelRc::from(Rc::new(slint::VecModel::from(v)));
                 ui.set_dataset_export_settings(settings);
             }
         });
@@ -2759,20 +2755,14 @@ pub fn setup_callbacks(
             let ptte = Arc::clone(&progress_total_tiles_expected);
             let cancel_bg = Arc::clone(&cancel);
 
-            let (result_tx, result_rx) = std::sync::mpsc::channel::<
-                Result<common::dataset::DatasetPatchesReport, String>,
-            >();
+            let (result_tx, result_rx) =
+                std::sync::mpsc::channel::<Result<common::dataset::DatasetPatchesReport, String>>();
 
             std::thread::Builder::new()
                 .name("dataset-export".into())
                 .spawn(move || {
                     let result = common::dataset::run_dataset_patches_with_progress(
-                        &config,
-                        &cancel_bg,
-                        &pt,
-                        &pcs,
-                        &pts,
-                        &ptte,
+                        &config, &cancel_bg, &pt, &pcs, &pts, &ptte,
                     );
                     let _ = result_tx.send(result.map_err(|e| e.to_string()));
                 })

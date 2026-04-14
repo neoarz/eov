@@ -57,7 +57,11 @@ pub fn expand_inputs(inputs: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, String)
     // Deduplicate by canonical path, preserving first-seen order.
     deduplicate_by_canonical(&mut slides);
 
-    debug!("Expanded {} inputs into {} slide(s)", inputs.len(), slides.len());
+    debug!(
+        "Expanded {} inputs into {} slide(s)",
+        inputs.len(),
+        slides.len()
+    );
 
     (slides, errors)
 }
@@ -90,8 +94,7 @@ fn collect_slides_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
 fn deduplicate_by_canonical(paths: &mut Vec<PathBuf>) {
     let mut seen = std::collections::HashSet::new();
     paths.retain(|p| {
-        let key = std::fs::canonicalize(p)
-            .unwrap_or_else(|_| p.clone());
+        let key = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
         seen.insert(key)
     });
 }

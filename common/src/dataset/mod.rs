@@ -12,10 +12,10 @@ mod output;
 mod pipeline;
 
 pub use config::{DatasetPatchesConfig, MetadataFormat};
-pub use discovery::{expand_inputs, is_supported_slide_extension, SUPPORTED_SLIDE_EXTENSIONS};
+pub use discovery::{SUPPORTED_SLIDE_EXTENSIONS, expand_inputs, is_supported_slide_extension};
 pub use grid::generate_patch_coords;
 pub use metadata::TileRecord;
 pub use pipeline::{
-    run_dataset_patches, run_dataset_patches_with_progress, DatasetPatchesProgress,
-    DatasetPatchesReport, SlideReport, SlideSkipReason,
+    DatasetPatchesProgress, DatasetPatchesReport, SlideReport, SlideSkipReason,
+    run_dataset_patches, run_dataset_patches_with_progress,
 };
