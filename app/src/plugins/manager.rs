@@ -52,6 +52,8 @@ pub struct PluginManager {
     loaded_vtables: HashMap<String, PluginVTable>,
     /// Plugin ids that are Python plugins (spawned as subprocesses).
     python_plugins: HashSet<String>,
+    /// Python plugin ids that have already been spawned at least once.
+    pub spawned_python_plugins: HashSet<String>,
 }
 
 impl PluginManager {
@@ -63,6 +65,7 @@ impl PluginManager {
             plugin_dir,
             loaded_vtables: HashMap::new(),
             python_plugins: HashSet::new(),
+            spawned_python_plugins: HashSet::new(),
         }
     }
 

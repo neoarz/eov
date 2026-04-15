@@ -389,7 +389,21 @@ fn setup_callbacks(
                 crate::plugins::spawn_rust_plugin_window(&plugin_root);
             }
             Ok(plugins::ActionOutcome::PythonSpawn { script_path, plugin_root }) => {
-                crate::plugins::spawn_python_plugin(&script_path, &plugin_root);
+                // If the Python plugin has been spawned before (and presumably
+                // registered remote filters), toggle those filters on/off rather
+                // than spawning a second instance.
+                if pm.spawned_python_plugins.contains(&plugin_id) {
+                    let s = filter_state.read();
+                    let mut ehs = s.extension_host_state.write();
+                    ehs.toggle_all_filters();
+                    drop(ehs);
+                    drop(s);
+                    // Request a re-render so the viewport reflects the toggled filter.
+                    request_render_loop(&rerender_timer, &rerender_ui, &rerender_state, &rerender_cache);
+                } else {
+                    pm.spawned_python_plugins.insert(plugin_id.clone());
+                    crate::plugins::spawn_python_plugin(&script_path, &plugin_root);
+                }
             }
             Ok(plugins::ActionOutcome::Handled) => {
                 // Sync filter enabled states from plugins into the filter chain.

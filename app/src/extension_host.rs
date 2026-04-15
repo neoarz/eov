@@ -49,6 +49,54 @@ impl ExtensionHostState {
             filters: HashMap::new(),
         }
     }
+
+    /// Toggle the enabled state of any registered remote filter whose name
+    /// contains `name_substr`. Returns `true` if at least one filter was toggled.
+    #[allow(dead_code)]
+    pub fn toggle_filters_by_name(&mut self, name_substr: &str) -> bool {
+        let mut toggled = false;
+        for filter in self.filters.values_mut() {
+            if filter.name.to_lowercase().contains(&name_substr.to_lowercase()) {
+                filter.enabled = !filter.enabled;
+                info!(
+                    "Toggled remote filter '{}' -> enabled={}",
+                    filter.name, filter.enabled
+                );
+                toggled = true;
+            }
+        }
+        toggled
+    }
+
+    /// Returns `true` if any registered remote filter is enabled and supports CPU.
+    pub fn has_enabled_cpu_filters(&self) -> bool {
+        self.filters
+            .values()
+            .any(|f| f.enabled && f.supports_cpu)
+    }
+
+    /// Returns `true` if any registered remote filter is enabled and supports GPU.
+    pub fn has_enabled_gpu_filters(&self) -> bool {
+        self.filters
+            .values()
+            .any(|f| f.enabled && f.supports_gpu)
+    }
+
+    /// Returns `true` if any registered remote filter is enabled.
+    pub fn has_enabled_filters(&self) -> bool {
+        self.filters.values().any(|f| f.enabled)
+    }
+
+    /// Toggle the enabled state of all registered remote filters.
+    pub fn toggle_all_filters(&mut self) {
+        for filter in self.filters.values_mut() {
+            filter.enabled = !filter.enabled;
+            info!(
+                "Toggled remote filter '{}' -> enabled={}",
+                filter.name, filter.enabled
+            );
+        }
+    }
 }
 
 /// Thread-safe handle to extension host state.

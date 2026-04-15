@@ -59,6 +59,7 @@ struct RenderPaneRequest<'a> {
     render_backend: RenderBackend,
     filtering_mode: FilteringMode,
     filter_chain: &'a crate::viewport_filter::SharedFilterChain,
+    extension_host_state: &'a crate::extension_host::SharedExtensionHostState,
 }
 
 #[derive(Clone)]
@@ -107,6 +108,7 @@ struct CpuPaneSnapshot {
     stain_params_epoch: u64,
     stain_params_method: StainNormalization,
     filtering_mode: FilteringMode,
+    force_render: bool,
 }
 
 struct CpuFrameSnapshot {
@@ -460,6 +462,7 @@ pub(crate) fn update_and_render(
     let mut keep_running = render_requested || cpu_jobs_pending;
     let mut rendered_frame = completed_cpu_frame;
     let filter_chain = state.filter_chain.clone();
+    let extension_host_state = state.extension_host_state.clone();
 
     for (pane_index, file_id) in active_file_ids.into_iter().enumerate() {
         let pane = PaneId(pane_index);
@@ -490,7 +493,7 @@ pub(crate) fn update_and_render(
                 .and_then(|entry| entry.content.as_ref())
                 .is_none()
         });
-        let force_render = file_switched || content_missing;
+        let force_render = file_switched || content_missing || render_requested;
 
         if pane.0 == 1 {
             debug!(
@@ -523,6 +526,7 @@ pub(crate) fn update_and_render(
                 render_backend,
                 filtering_mode,
                 filter_chain: &filter_chain,
+                extension_host_state: &extension_host_state,
             },
         );
 
@@ -871,6 +875,7 @@ fn collect_cpu_frame_snapshot(
             stain_params_epoch,
             stain_params_method,
             filtering_mode,
+            force_render: render_requested,
         }));
     }
 
@@ -1110,6 +1115,7 @@ fn render_cpu_pane_from_snapshot(
 
     if !snapshot.file_switched
         && !snapshot.content_missing
+        && !snapshot.force_render
         && !is_first_frame
         && !viewport_changed
         && !level_changed
@@ -1474,6 +1480,7 @@ fn render_pane_to_image(
         render_backend,
         filtering_mode,
         filter_chain,
+        extension_host_state,
     } = request;
 
     let (
@@ -1777,7 +1784,9 @@ fn render_pane_to_image(
         let image = crate::with_gpu_renderer(|renderer| {
             let has_gpu_filters = filter_chain.read().has_enabled_gpu_filters();
             let has_cpu_filters = filter_chain.read().has_enabled_cpu_filters();
-            renderer.borrow_mut().gpu_filters_enabled = has_gpu_filters || has_cpu_filters;
+            let has_remote_filters = extension_host_state.read().has_enabled_filters();
+            renderer.borrow_mut().gpu_filters_enabled =
+                has_gpu_filters || has_cpu_filters || has_remote_filters;
             renderer.borrow_mut().queue_frame(
                 slot,
                 QueuedFrame {
