@@ -22,16 +22,39 @@ The name `eov` has no canonical expansion.
 
 ## Installation
 
-Windows, macOS, and Linux are supported. Prebuilt binaries can be downloaded from the [Release page](https://github.com/eosin-platform/eov/releases/tag/v0.2.11).
+Windows, macOS, and Linux are supported. Prebuilt binaries can be downloaded from the [Release page](https://github.com/eosin-platform/eov/releases/tag/v0.2.12).
 
 Both x86_64 and arm64 builds for all supported platforms are available. Make you sure you select the right architecture!
 
+### macOS
+The `.app` file is available. For Intel-based Macs, download the release with `x86` in the name. Apple M-series machines require the `arm64` bundle:
+- [Apple Silicon (M-series)](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-macos-arm64.zip) (all Macs released since June 2023)
+- [Intel (x86_64) Mac](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-macos-x86_64.zip) (All Macs released prior to 2020 and some through 2023)
+
+Download and open the `.app` file to run it. The app is not signed and you'll see an error message about the app being from an unidentified developer. To fix this, go to System Preferences → Security & Privacy and hit the "Open Anyway" button. Expect to repeat this process whenever you download a new version. 
+
+Installation via `brew` is currently a work-in-progress. 
+
+### Windows
+A zip file containing a portable Windows build is available:
+- [x86_64](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-windows-x86_64.zip) (most Windows machines)
+- [arm64](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-windows-arm64.zip) (rarer)
+
+Extract and run `eov.exe` within the zip to start the program. Only the portable version is available; no Windows installer is planned. Because the binary is not signed, you'll get a security alert when attempting to open it. This alert can be safely bypassed through the "Run anyway" button. You will be hassled by this dialog every time you download a new version.
+
+If you want the `eov` command to be available via PATH (e.g. for command prompt or PowerShell) you can do this by [adding `C:/path/to/eov` to System Variables](https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574%28v%3Doffice.14%29) (given `C:/path/to/eov/eov.exe` reflects your directory structure).
+
 ### Linux
-There are two methods of installation: AppImage and Flatpak. The AppImage is directly executable:
+There are two methods of installation.
+
+- AppImage: [x86_64](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-linux-x86_64.AppImage) | [arm64](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-linux-aarch64.AppImage)
+- Flatpak: [x86_64](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-linux-x86_64.flatpak) | [arm64](https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-linux-aarch64.flatpak)
+
+The AppImage is directly executable:
 
 ```bash
 # Download the binary
-curl -L -o eov https://github.com/eosin-platform/eov/releases/download/v0.2.11/eov-v0.2.11-linux-x86_64.AppImage
+curl -L -o eov https://github.com/eosin-platform/eov/releases/download/v0.2.12/eov-v0.2.12-linux-x86_64.AppImage
 
 # Make it executable (ensure correct filename!)
 chmod +x ./eov
@@ -45,18 +68,6 @@ sudo mv eov /usr/local/bin/eov
 # Start the installed app with a nice, short command from any directory:
 eov
 ```
-
-### macOS
-The `.app` file is available via the Releases page. Download and open the `.app` file to run it. The app is not signed and you'll see an error message about the app being from an unidentified developer. To fix this, go to System Preferences → Security & Privacy and hit the "Open Anyway" button. Expect to repeat this process whenever you download a new version. 
-
-For Intel-based Macs, download the release with `x86` in the name. Apple M-series machines require the `arm64` bundle.
-
-Installation via `brew` is currently a work-in-progress. 
-
-### Windows
-A zip file containing a portable Windows build is available on the Releases page. Extract and run `eov.exe` within the zip to start the program. Only the portable version is available; no Windows installer is planned. Because the binary is not signed, you'll get a security alert when attempting to open it. This alert can be safely bypassed through the "Run anyway" button. You will be hassled by this dialog every time you download a new version.
-
-If you want the `eov` command to be available via PATH (e.g. for command prompt or PowerShell) you can do this by [adding `C:/path/to/eov` to System Variables](https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574%28v%3Doffice.14%29) (given `C:/path/to/eov/eov.exe` reflects your directory structure).
 
 ### Example WSI Files
 
@@ -466,7 +477,6 @@ The project is functional and already supports the core interactive viewing work
 
 Contributions are welcome. This project is part of the [Eosin Platform](https://github.com/eosin-platform).
 
-
 ## License
 
 All of the code in this repository is released under Apache 2.0 / MIT dual license.
@@ -474,4 +484,4 @@ All of the code in this repository is released under Apache 2.0 / MIT dual licen
 ### Dependency License Notes
 
 - [OpenSlide](https://openslide.org/) is released under LGPL. EOV's releases bundle OpenSlide as a dynamic library to comply with the terms of LGPL.
-- [Slint](https://slint.dev/) is used under the free license, which is permissive outside of embedded environments.
+- [Slint](https://slint.dev/) is used under the free (non-GPL) license, which is permissive outside of embedded environments.
