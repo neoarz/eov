@@ -65,6 +65,7 @@ impl From<FilteringMode> for ConfigFilteringMode {
 struct AppConfig {
     render_backend: Option<ConfigRenderBackend>,
     filtering_mode: Option<ConfigFilteringMode>,
+    extension_host_port: Option<u16>,
 }
 
 pub fn set_config_path_override(path: PathBuf) -> Result<()> {
@@ -134,6 +135,19 @@ pub fn save_filtering_mode(mode: FilteringMode) -> Result<()> {
     save_config_field(|config| {
         config.filtering_mode = Some(ConfigFilteringMode::from(mode));
     })
+}
+
+pub fn load_extension_host_port() -> Result<Option<u16>> {
+    let path = resolve_config_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read config file at {}", path.display()))?;
+    let config: AppConfig = toml::from_str(&contents)
+        .with_context(|| format!("failed to parse config file at {}", path.display()))?;
+    Ok(config.extension_host_port)
 }
 
 fn save_config_field(update: impl FnOnce(&mut AppConfig)) -> Result<()> {

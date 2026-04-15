@@ -7,8 +7,10 @@ mod callbacks;
 mod cli;
 mod clipboard;
 mod config;
+mod extension_host;
 mod file_ops;
 mod gpu;
+mod gpu_interop;
 mod pane_ui;
 mod plugins;
 mod render;
@@ -18,6 +20,12 @@ mod state;
 mod tile_loader;
 mod tools;
 mod ui_update;
+mod viewport_filter;
+
+/// Compiled gRPC proto module.
+pub(crate) mod eov_extension {
+    tonic::include_proto!("eov.extension");
+}
 
 use anyhow::Result;
 use common::{RenderBackend, TileCache};
@@ -155,7 +163,7 @@ fn main() -> Result<()> {
         );
     }
 
-    let gpu_backend_available = select_backend(launch_options.window_geometry)?;
+    select_backend(launch_options.window_geometry)?;
     slint::set_xdg_app_id(APP_XDG_ID)?;
 
     let state = Arc::new(RwLock::new(AppState::new()));
@@ -164,6 +172,45 @@ fn main() -> Result<()> {
         launch_options.cache_size_bytes,
     ));
     render_pool::init_global()?;
+
+    // ----- Extension host (gRPC server for external plugins) -----
+    let extension_host_port = launch_options
+        .extension_host_port
+        .or_else(|| config::load_extension_host_port().ok().flatten());
+
+    // Build and leak a multi-threaded Tokio runtime for the async gRPC server
+    // and any other async work (export, etc.).
+    let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
+    let tokio_handle = tokio_runtime.handle().clone();
+
+    // Store the shared handles in AppState so the render pipeline can reach them.
+    {
+        let mut s = state.write();
+        s.tokio_handle = Some(tokio_handle.clone());
+    }
+
+    let extension_host_state = {
+        let s = state.read();
+        Arc::clone(&s.extension_host_state)
+    };
+
+    if let Some(port) = extension_host_port {
+        let ext_state = Arc::clone(&extension_host_state);
+        tokio_handle.spawn(async move {
+            if let Err(e) = extension_host::start_extension_host(port, ext_state).await {
+                tracing::error!("Extension host server failed: {e}");
+            }
+        });
+        // Set the env var so spawned plugin processes can discover the host.
+        // SAFETY: called before spawning any plugin child processes.
+        unsafe {
+            std::env::set_var("EOV_EXTENSION_HOST", format!("grpc://localhost:{port}"));
+        }
+        info!("Extension host gRPC server starting on port {port}");
+    }
 
     // ----- Plugin system initialization -----
     let plugin_manager = Rc::new(RefCell::new(plugins::PluginManager::new(
@@ -175,6 +222,21 @@ fn main() -> Result<()> {
         if let Err(e) = pm.activate_all() {
             tracing::warn!("Plugin activation error: {e}");
         }
+
+        // Register FFI viewport filters into the shared filter chain.
+        {
+            let state = state.read();
+            let mut chain = state.filter_chain.write();
+            for (_plugin_id, vtable) in pm.loaded_vtables() {
+                let filters = (vtable.get_viewport_filters)();
+                for f in filters.iter() {
+                    let wrapper = crate::viewport_filter::FfiViewportFilter::new(*vtable, f);
+                    chain.register(f.filter_id.to_string(), Box::new(wrapper));
+                    info!("Registered viewport filter '{}' from plugin '{}'", f.filter_id, _plugin_id);
+                }
+            }
+        }
+
         info!(
             "Plugin system ready: {} toolbar button(s) from {} plugin(s)",
             pm.toolbar.len(),
@@ -236,7 +298,7 @@ fn main() -> Result<()> {
     ui.set_debug_mode(launch_options.debug_mode);
     {
         let mut state = state.write();
-        state.gpu_backend_available = gpu_backend_available;
+        state.gpu_backend_available = true;
         state.select_render_backend(initial_backend);
         if let Some(filtering) = initial_filtering {
             state.select_filtering_mode(filtering);
@@ -307,10 +369,15 @@ fn setup_callbacks(
     render_timer: Rc<Timer>,
     plugin_manager: Rc<RefCell<plugins::PluginManager>>,
 ) {
-    callbacks::setup_callbacks(ui, state, tile_cache, render_timer);
+    callbacks::setup_callbacks(ui, state.clone(), tile_cache.clone(), render_timer.clone());
 
     // Plugin button click callback — dispatch to plugin manager and open windows
     let pm = Rc::clone(&plugin_manager);
+    let filter_state = Arc::clone(&state);
+    let rerender_state = Arc::clone(&state);
+    let rerender_timer = Rc::clone(&render_timer);
+    let rerender_ui = ui.as_weak();
+    let rerender_cache = Arc::clone(&tile_cache);
     ui.on_plugin_button_clicked(move |plugin_id, action_id| {
         let plugin_id = plugin_id.to_string();
         let action_id = action_id.to_string();
@@ -324,7 +391,14 @@ fn setup_callbacks(
             Ok(plugins::ActionOutcome::PythonSpawn { script_path, plugin_root }) => {
                 crate::plugins::spawn_python_plugin(&script_path, &plugin_root);
             }
-            Ok(plugins::ActionOutcome::Handled) => {}
+            Ok(plugins::ActionOutcome::Handled) => {
+                // Sync filter enabled states from plugins into the filter chain.
+                let s = filter_state.read();
+                pm.sync_filter_states(&s.filter_chain);
+                drop(s);
+                // Request a re-render so the viewport reflects the toggled filter.
+                request_render_loop(&rerender_timer, &rerender_ui, &rerender_state, &rerender_cache);
+            }
             Err(e) => {
                 tracing::error!("Plugin action error: {e}");
             }

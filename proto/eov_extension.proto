@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package eov.extension;
+
+// ---------------------------------------------------------------------------
+// Extension Host gRPC service
+//
+// External plugins (Python, Go, etc.) connect to this service to register
+// viewport filters and exchange pixel data with the EOV renderer.
+// ---------------------------------------------------------------------------
+
+service ExtensionHost {
+  // Register a viewport filter. Returns a unique filter id.
+  rpc RegisterFilter(RegisterFilterRequest) returns (RegisterFilterResponse);
+
+  // Unregister a previously registered filter.
+  rpc UnregisterFilter(UnregisterFilterRequest) returns (UnregisterFilterResponse);
+
+  // Enable or disable a registered filter.
+  rpc SetFilterEnabled(SetFilterEnabledRequest) returns (SetFilterEnabledResponse);
+
+  // Apply a CPU-side filter: receive RGBA pixels, return transformed pixels.
+  // Called by the host when the render backend is CPU.
+  rpc ApplyFilterCpu(ApplyFilterCpuRequest) returns (ApplyFilterCpuResponse);
+
+  // Streaming variant: host pushes frames, plugin returns processed frames.
+  rpc ApplyFilterCpuStream(stream ApplyFilterCpuRequest) returns (stream ApplyFilterCpuResponse);
+
+  // Notify the plugin that a GPU frame is ready for processing via DMA-BUF.
+  // The actual DMA-BUF fd and sync fence fds are passed out-of-band over
+  // a Unix domain socket (see dma_buf_socket_path in RegisterFilterResponse).
+  // This RPC carries only the metadata; the plugin reads the fds from the
+  // socket, processes the image on the GPU, and responds when done.
+  rpc ApplyFilterGpu(ApplyFilterGpuRequest) returns (ApplyFilterGpuResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+message RegisterFilterRequest {
+  // Human-readable name shown in the UI.
+  string name = 1;
+
+  // Whether this filter supports CPU pixel processing.
+  bool supports_cpu = 2;
+
+  // Whether this filter supports GPU processing (future: DMA-BUF).
+  bool supports_gpu = 3;
+}
+
+message RegisterFilterResponse {
+  // Unique identifier assigned to the filter by the host.
+  string filter_id = 1;
+
+  // Path to the Unix domain socket used for DMA-BUF file descriptor passing.
+  // Only set when the filter supports GPU and the host has DMA-BUF export
+  // capability. The plugin connects to this socket and receives DMA-BUF fds
+  // + sync fence fds via SCM_RIGHTS ancillary messages.
+  string dma_buf_socket_path = 2;
+}
+
+message UnregisterFilterRequest {
+  string filter_id = 1;
+}
+
+message UnregisterFilterResponse {}
+
+message SetFilterEnabledRequest {
+  string filter_id = 1;
+  bool enabled = 2;
+}
+
+message SetFilterEnabledResponse {}
+
+message ApplyFilterCpuRequest {
+  // The filter that should process this frame.
+  string filter_id = 1;
+
+  // Image dimensions.
+  uint32 width = 2;
+  uint32 height = 3;
+
+  // Raw RGBA8 pixel data (width * height * 4 bytes).
+  bytes rgba_data = 4;
+}
+
+message ApplyFilterCpuResponse {
+  // Transformed RGBA8 pixel data (same dimensions as the request).
+  bytes rgba_data = 1;
+}
+
+message ApplyFilterGpuRequest {
+  // The filter that should process this frame.
+  string filter_id = 1;
+
+  // Image dimensions.
+  uint32 width = 2;
+  uint32 height = 3;
+
+  // DRM pixel format (e.g. DRM_FORMAT_ABGR8888 = 0x34324241).
+  uint32 drm_format = 4;
+
+  // Row stride in bytes.
+  uint32 stride = 5;
+
+  // Total DMA-BUF allocation size in bytes.
+  uint64 dma_buf_size = 6;
+
+  // Note: the actual DMA-BUF fd and sync fence fds are passed out-of-band
+  // over the Unix domain socket (dma_buf_socket_path). For each GPU frame:
+  //   1. Host sends 2 fds via SCM_RIGHTS: [dma_buf_fd, ready_fence_fd]
+  //   2. Host sends this gRPC request
+  //   3. Plugin imports dma_buf_fd, waits on ready_fence_fd
+  //   4. Plugin processes the image on the GPU
+  //   5. Plugin sends 1 fd via SCM_RIGHTS: [done_fence_fd]
+  //   6. Plugin sends ApplyFilterGpuResponse
+}
+
+message ApplyFilterGpuResponse {
+  // Whether the filter was applied successfully.
+  bool success = 1;
+}

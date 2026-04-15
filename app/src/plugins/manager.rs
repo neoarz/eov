@@ -295,6 +295,24 @@ impl PluginManager {
     pub fn plugin_dir(&self) -> &Path {
         &self.plugin_dir
     }
+
+    /// Returns an iterator over all dynamically loaded plugin vtables.
+    /// Used to register FFI viewport filters into the filter chain.
+    pub fn loaded_vtables(&self) -> impl Iterator<Item = (&str, &PluginVTable)> {
+        self.loaded_vtables.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Poll all loaded FFI plugins for updated filter enabled states and
+    /// sync them into the shared filter chain.
+    pub fn sync_filter_states(&self, filter_chain: &crate::viewport_filter::SharedFilterChain) {
+        let mut chain = filter_chain.write();
+        for (_plugin_id, vtable) in &self.loaded_vtables {
+            let filters = (vtable.get_viewport_filters)();
+            for f in filters.iter() {
+                chain.set_enabled(&f.filter_id, f.enabled);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -365,9 +383,8 @@ data = "<svg/>"
         mgr.discover();
         mgr.activate_all().unwrap();
 
-        let requests = mgr.handle_action("example_plugin", "open_panel").unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].component, "MyPanel");
+        let result = mgr.handle_action("example_plugin", "open_panel").unwrap();
+        assert!(matches!(result, ActionOutcome::Handled));
     }
 
     #[test]

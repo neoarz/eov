@@ -77,7 +77,7 @@ Current capabilities include:
 - Duplicate tabs into additional panes for side-by-side comparison.
 - Drag tabs between panes, reorder tabs, and create splits by dropping onto pane edges.
 - Pan and zoom smoothly with on-demand tile loading and cached rendering.
-- Toggle between CPU and GPU rendering, with automatic fallback to CPU when GPU rendering is unavailable.
+- Toggle between CPU and GPU rendering (Vulkan).
 - Adaptive [Lanczos](https://en.wikipedia.org/wiki/Lanczos_resampling) (high quality), [Trilinear](https://en.wikipedia.org/wiki/Trilinear_filtering) (industry standard, performant), and [Bilinear](https://en.wikipedia.org/wiki/Bilinear_interpolation) (fast) texture filtering.
 - Real-time image adjustments: sharpness (unsharp mask), gamma, brightness, and contrast sliders applied via convolution + per-channel LUT (CPU) or per-pixel shader (GPU).
 - Stain normalization: Macenko (SVD/PCA angular-percentile) and Vahadane (sparse non-negative dictionary learning) methods, both running on CPU and GPU backends with matched output.
@@ -328,10 +328,10 @@ impl Plugin for MyPlugin {
 
 ### Example Plugin
 
-The `example_plugin/` crate in this repository demonstrates the full pattern: a toolbar button with an inline SVG icon that opens a standalone Slint window. To try it:
+The `example_plugins/example_rust/` crate in this repository demonstrates the full pattern: a toolbar button with an inline SVG icon that opens a standalone Slint window. To try it:
 
 1. Build the workspace: `cargo build --bin eov`
-2. Copy `example_plugin/` to `~/.eov/plugins/example_plugin/` (the directory must contain `plugin.toml` and the `ui/` folder)
+2. Copy `example_plugins/example_rust/` to `~/.eov/plugins/example_plugin/` (the directory must contain `plugin.toml` and the `ui/` folder)
 3. Run: `eov slide.svs`
 
 The smiley-face button should appear in the toolbar; clicking it opens the example panel window.
@@ -379,7 +379,7 @@ To **manually** build eov and run the binary, you need:
 - OpenSlide installed on the system, including the development package needed for linking.
 - The native libraries required by Slint, winit, and the selected graphics stack on your platform.
 
-On Linux, the most important dependency is usually OpenSlide itself. Depending on your distribution, you may also need the usual X11, Wayland, EGL, and font development packages used by Rust GUI applications. Generally, you can just run this you're good to go:
+On Linux, the most important dependency is usually OpenSlide itself. Depending on your distribution, you may also need the usual X11, Wayland, Vulkan, and font development packages used by Rust GUI applications. Generally, you can just run this you're good to go:
 
 ```bash
 sudo apt-get update
@@ -388,7 +388,7 @@ sudo apt-get install -y \
     cargo \
     curl \
     file \
-    libegl1-mesa-dev \
+    libvulkan-dev \
     libfontconfig-dev \
     libopenslide-dev \
     libwayland-dev \
@@ -448,10 +448,11 @@ Current packaging entry points:
 │   └── benches/          # Benchmarks for various core functions
 ├── plugin_api/           # Shared plugin trait definitions and manifest types
 │   └── src/
-├── example_plugin/       # Reference plugin with toolbar button and UI window
-│   ├── src/
-│   ├── ui/               # Runtime-loaded .slint file
-│   └── plugin.toml       # Plugin manifest
+├── example_plugins/      # Reference plugins
+│   ├── example_rust/     # FFI plugin with toolbar button and UI window
+│   ├── example_python/   # Python plugin with Slint UI
+│   ├── grayscale_rust/   # Viewport filter plugin (Rust FFI)
+│   └── grayscale_python/ # Viewport filter plugin (Python gRPC)
 └── fixtures/             # Sample data used for local testing/benchmarks
 ```
 

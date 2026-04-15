@@ -40,8 +40,8 @@ impl ExamplePlugin {
             id: "example_plugin".into(),
             name: "Example Plugin".into(),
             version: "0.1.0".into(),
-            entry_ui: "ui/my_panel.slint".into(),
-            entry_component: "MyPanel".into(),
+            entry_ui: Some("ui/my_panel.slint".into()),
+            entry_component: Some("MyPanel".into()),
             icon: Some(IconDescriptor::Svg {
                 data: SMILEY_SVG.into(),
             }),
@@ -81,11 +81,13 @@ impl Plugin for ExamplePlugin {
                 .unwrap()
                 .record("open_panel_requested");
             // Ask the host to open our plugin window
-            let ui_path = self.manifest.resolve_entry_ui(plugin_root);
+            let ui_path = self.manifest.resolve_entry_ui(plugin_root)
+                .expect("example plugin must have entry_ui");
             host.open_plugin_window(
                 &self.manifest.id,
                 &ui_path,
-                &self.manifest.entry_component,
+                self.manifest.entry_component.as_deref()
+                    .expect("example plugin must have entry_component"),
             )?;
         }
         Ok(())
@@ -97,7 +99,7 @@ impl Plugin for ExamplePlugin {
 // ---------------------------------------------------------------------------
 
 use abi_stable::std_types::{RString, RVec};
-use plugin_api::ffi::{ActionResponseFFI, PluginVTable, ToolbarButtonFFI};
+use plugin_api::ffi::{ActionResponseFFI, PluginVTable, ToolbarButtonFFI, ViewportFilterFFI};
 
 extern "C" fn get_toolbar_buttons_ffi() -> RVec<ToolbarButtonFFI> {
     RVec::from(vec![ToolbarButtonFFI {
@@ -125,6 +127,29 @@ extern "C" fn on_ui_callback_ffi(callback_name: RString) {
     );
 }
 
+extern "C" fn get_viewport_filters_ffi() -> RVec<ViewportFilterFFI> {
+    RVec::new()
+}
+
+extern "C" fn apply_filter_cpu_ffi(
+    _filter_id: RString,
+    _rgba_data: *mut u8,
+    _len: u32,
+    _width: u32,
+    _height: u32,
+) -> bool {
+    false
+}
+
+extern "C" fn apply_filter_gpu_ffi(
+    _filter_id: RString,
+    _ctx: *const plugin_api::ffi::GpuFilterContextFFI,
+) -> bool {
+    false
+}
+
+extern "C" fn set_filter_enabled_ffi(_filter_id: RString, _enabled: bool) {}
+
 /// The factory function exported by this plugin for dynamic loading by the host.
 #[unsafe(no_mangle)]
 pub extern "C" fn eov_get_plugin_vtable() -> PluginVTable {
@@ -132,6 +157,10 @@ pub extern "C" fn eov_get_plugin_vtable() -> PluginVTable {
         get_toolbar_buttons: get_toolbar_buttons_ffi,
         on_action: on_action_ffi,
         on_ui_callback: on_ui_callback_ffi,
+        get_viewport_filters: get_viewport_filters_ffi,
+        apply_filter_cpu: apply_filter_cpu_ffi,
+        apply_filter_gpu: apply_filter_gpu_ffi,
+        set_filter_enabled: set_filter_enabled_ffi,
     }
 }
 
@@ -143,7 +172,7 @@ mod tests {
     fn default_manifest_valid() {
         let m = ExamplePlugin::default_manifest();
         assert_eq!(m.id, "example_plugin");
-        assert_eq!(m.entry_component, "MyPanel");
+        assert_eq!(m.entry_component.as_deref(), Some("MyPanel"));
         assert!(m.icon.is_some());
     }
 

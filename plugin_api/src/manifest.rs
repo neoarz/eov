@@ -34,9 +34,13 @@ pub struct PluginManifest {
     /// Semantic version string.
     pub version: String,
     /// Relative path to the `.slint` UI file (from the plugin root).
-    pub entry_ui: String,
+    /// Optional — plugins that are pure viewport filters may omit this.
+    #[serde(default)]
+    pub entry_ui: Option<String>,
     /// Name of the exported Slint component inside `entry_ui`.
-    pub entry_component: String,
+    /// Optional — plugins that are pure viewport filters may omit this.
+    #[serde(default)]
+    pub entry_component: Option<String>,
     /// Optional icon for the toolbar button.
     pub icon: Option<IconDescriptor>,
     /// Language the plugin is written in (default: `rust`).
@@ -98,34 +102,35 @@ impl PluginManifest {
                 message: "'version' must not be empty".into(),
             });
         }
-        if self.entry_ui.is_empty() {
-            return Err(PluginError::Manifest {
-                plugin_id: self.id.clone(),
-                message: "'entry_ui' must not be empty".into(),
-            });
+        if let Some(ref entry_ui) = self.entry_ui {
+            if entry_ui.is_empty() {
+                return Err(PluginError::Manifest {
+                    plugin_id: self.id.clone(),
+                    message: "'entry_ui' must not be empty when specified".into(),
+                });
+            }
+            // entry_ui must be a relative path
+            if Path::new(entry_ui).is_absolute() {
+                return Err(PluginError::Manifest {
+                    plugin_id: self.id.clone(),
+                    message: format!("'entry_ui' must be a relative path, got '{entry_ui}'"),
+                });
+            }
+            // Reject path traversal
+            if entry_ui.contains("..") {
+                return Err(PluginError::Manifest {
+                    plugin_id: self.id.clone(),
+                    message: format!("'entry_ui' must not contain '..', got '{entry_ui}'"),
+                });
+            }
         }
-        if self.entry_component.is_empty() {
-            return Err(PluginError::Manifest {
-                plugin_id: self.id.clone(),
-                message: "'entry_component' must not be empty".into(),
-            });
-        }
-        // entry_ui must be a relative path
-        if Path::new(&self.entry_ui).is_absolute() {
-            return Err(PluginError::Manifest {
-                plugin_id: self.id.clone(),
-                message: format!("'entry_ui' must be a relative path, got '{}'", self.entry_ui),
-            });
-        }
-        // Reject path traversal
-        if self.entry_ui.contains("..") {
-            return Err(PluginError::Manifest {
-                plugin_id: self.id.clone(),
-                message: format!(
-                    "'entry_ui' must not contain '..', got '{}'",
-                    self.entry_ui
-                ),
-            });
+        if let Some(ref entry_component) = self.entry_component {
+            if entry_component.is_empty() {
+                return Err(PluginError::Manifest {
+                    plugin_id: self.id.clone(),
+                    message: "'entry_component' must not be empty when specified".into(),
+                });
+            }
         }
         // Python plugins require entry_script
         if self.language == PluginLanguage::Python {
@@ -174,18 +179,20 @@ impl PluginManifest {
     }
 
     /// Resolve the `entry_ui` to an absolute path given the plugin root.
-    pub fn resolve_entry_ui(&self, plugin_root: &Path) -> PathBuf {
-        plugin_root.join(&self.entry_ui)
+    /// Returns `None` if `entry_ui` is not set.
+    pub fn resolve_entry_ui(&self, plugin_root: &Path) -> Option<PathBuf> {
+        self.entry_ui.as_ref().map(|ui| plugin_root.join(ui))
     }
 
     /// Validate that referenced files actually exist on disk.
     pub fn validate_files(&self, plugin_root: &Path) -> PluginResult<()> {
-        let ui_path = self.resolve_entry_ui(plugin_root);
-        if !ui_path.exists() {
-            return Err(PluginError::MissingFile {
-                plugin_id: self.id.clone(),
-                path: ui_path,
-            });
+        if let Some(ui_path) = self.resolve_entry_ui(plugin_root) {
+            if !ui_path.exists() {
+                return Err(PluginError::MissingFile {
+                    plugin_id: self.id.clone(),
+                    path: ui_path,
+                });
+            }
         }
         if let Some(IconDescriptor::File { path }) = &self.icon {
             let icon_path = plugin_root.join(path);
@@ -231,8 +238,8 @@ data = "<svg/>"
         assert_eq!(m.id, "test_plugin");
         assert_eq!(m.name, "Test Plugin");
         assert_eq!(m.version, "1.0.0");
-        assert_eq!(m.entry_ui, "ui/panel.slint");
-        assert_eq!(m.entry_component, "Panel");
+        assert_eq!(m.entry_ui.as_deref(), Some("ui/panel.slint"));
+        assert_eq!(m.entry_component.as_deref(), Some("Panel"));
         assert_eq!(
             m.icon,
             Some(IconDescriptor::Svg {
@@ -296,7 +303,7 @@ entry_component = "Evil"
     fn resolve_entry_ui_relative_to_root() {
         let m = PluginManifest::from_toml(VALID_TOML, "test").unwrap();
         let resolved = m.resolve_entry_ui(Path::new("/plugins/test_plugin"));
-        assert_eq!(resolved, PathBuf::from("/plugins/test_plugin/ui/panel.slint"));
+        assert_eq!(resolved, Some(PathBuf::from("/plugins/test_plugin/ui/panel.slint")));
     }
 
     #[test]

@@ -57,7 +57,7 @@ jobs:
             cargo \
             curl \
             file \
-            libegl1-mesa-dev \
+            libvulkan-dev \
             libfontconfig-dev \
             libopenslide-dev \
             libwayland-dev \

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use slint::BackendSelector;
-use tracing::warn;
+use slint::wgpu_28::wgpu;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct WindowGeometry {
@@ -10,25 +10,15 @@ pub(crate) struct WindowGeometry {
     pub(crate) y: Option<i32>,
 }
 
-pub(crate) fn select_backend(window_geometry: WindowGeometry) -> Result<bool> {
-    let gpu_result = winit_backend_selector(window_geometry)
-        .renderer_name("femtovg-wgpu".to_string())
-        .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::default())
-        .select();
+pub(crate) fn select_backend(window_geometry: WindowGeometry) -> Result<()> {
+    let mut settings = slint::wgpu_28::WGPUSettings::default();
+    settings.backends = wgpu::Backends::VULKAN;
 
-    match gpu_result {
-        Ok(()) => Ok(true),
-        Err(err) => {
-            warn!(
-                "GPU backend unavailable, falling back to CPU renderer: {}",
-                err
-            );
-            winit_backend_selector(window_geometry)
-                .renderer_name("femtovg".to_string())
-                .select()?;
-            Ok(false)
-        }
-    }
+    winit_backend_selector(window_geometry)
+        .renderer_name("femtovg-wgpu".to_string())
+        .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::Automatic(settings))
+        .select()?;
+    Ok(())
 }
 
 fn winit_backend_selector(window_geometry: WindowGeometry) -> BackendSelector {

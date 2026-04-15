@@ -8,4 +8,4 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 abi_stable = { version = "0.11", default-features = false }
-plugin_api = { path = "../plugin_api" }
+plugin_api = { path = "../../plugin_api" }

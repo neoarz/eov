@@ -931,7 +931,7 @@ fn apply_completed_cpu_renders(state: &mut AppState) -> (bool, bool) {
 
     let mut applied = false;
 
-    while let Some(result) = pool.try_recv() {
+    while let Some(mut result) = pool.try_recv() {
         let pane = PaneId(result.pane_index);
         let is_active = state.active_file_id_for_pane(pane) == Some(result.file_id);
         let Some(file) = state
@@ -958,6 +958,25 @@ fn apply_completed_cpu_renders(state: &mut AppState) -> (bool, bool) {
         if !is_active {
             pool.recycle_buffer(result.pixels);
             continue;
+        }
+
+        // Apply in-process viewport filters (e.g. grayscale from FFI plugins).
+        {
+            let chain = state.filter_chain.read();
+            if chain.has_enabled_cpu_filters() {
+                chain.apply_cpu(&mut result.pixels, result.width, result.height);
+            }
+        }
+
+        // Apply remote (gRPC) viewport filters.
+        if let Some(ref tokio_handle) = state.tokio_handle {
+            crate::extension_host::apply_remote_cpu_filters(
+                &state.extension_host_state,
+                &mut result.pixels,
+                result.width,
+                result.height,
+                tokio_handle,
+            );
         }
 
         let Some(buffer) =

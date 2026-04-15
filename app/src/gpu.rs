@@ -1,5 +1,7 @@
+use crate::gpu_interop::{ExportableImage, VulkanHandles};
 use crate::AppWindow;
 use anyhow::Result;
+use ash::vk::Handle as VkHandle;
 use bytemuck::{Pod, Zeroable};
 use common::{FilteringMode, TileCoord, TileData};
 use slint::ComponentHandle;
@@ -380,6 +382,56 @@ fn fs_lanczos(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Fullscreen post-process shader for viewport filters (e.g. grayscale).
+/// Reads from a source texture and writes to the render target.
+/// The `enabled` uniform controls whether the effect is active.
+const POST_PROCESS_SHADER: &str = r#"
+struct PostProcessUniforms {
+    enabled: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
+@group(0) @binding(0) var src_texture: texture_2d<f32>;
+@group(0) @binding(1) var src_sampler: sampler;
+@group(0) @binding(2) var<uniform> uniforms: PostProcessUniforms;
+
+struct FullscreenOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_fullscreen(@builtin(vertex_index) idx: u32) -> FullscreenOutput {
+    // Fullscreen triangle covering the viewport.
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    var uvs = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(2.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+    );
+    var out: FullscreenOutput;
+    out.position = vec4<f32>(positions[idx], 0.0, 1.0);
+    out.uv = uvs[idx];
+    return out;
+}
+
+@fragment
+fn fs_grayscale(input: FullscreenOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(src_texture, src_sampler, input.uv);
+    if uniforms.enabled < 0.5 {
+        return color;
+    }
+    let lum = dot(color.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    return vec4<f32>(lum, lum, lum, color.a);
+}
+"#;
+
 // ---------------------------------------------------------------------------
 // Rust-side data structures
 // ---------------------------------------------------------------------------
@@ -754,6 +806,17 @@ struct GpuRuntime {
     vertex_capacity: usize,
     adjustments_buffer: wgpu::Buffer,
     surfaces: HashMap<usize, ImportedSurface>,
+    // Post-process pipeline for viewport filters
+    post_process_pipeline: wgpu::RenderPipeline,
+    post_process_bind_group_layout: wgpu::BindGroupLayout,
+    post_process_sampler: wgpu::Sampler,
+    post_process_uniforms_buffer: wgpu::Buffer,
+    /// Scratch textures for post-processing (per surface slot).
+    post_process_scratch: HashMap<usize, ImportedSurface>,
+    /// Raw Vulkan handles for plugin GPU filter interop.
+    vulkan_handles: Option<VulkanHandles>,
+    /// Per-slot exportable images for GPU filter plugins (DMA-BUF capable).
+    filter_images: HashMap<usize, ExportableImage>,
 }
 
 // ---------------------------------------------------------------------------
@@ -773,6 +836,8 @@ pub struct GpuRenderer {
     last_rendered_fingerprint: HashMap<usize, u64>,
     /// Last uploaded adjustments uniform, used to skip redundant uploads.
     last_adjustments: Option<AdjustmentsUniform>,
+    /// Whether GPU post-process filters are enabled (e.g. grayscale).
+    pub gpu_filters_enabled: bool,
 }
 
 impl GpuRenderer {
@@ -784,7 +849,200 @@ impl GpuRenderer {
             frame_counter: 0,
             last_rendered_fingerprint: HashMap::new(),
             last_adjustments: None,
+            gpu_filters_enabled: false,
         }
+    }
+
+    /// Get the raw Vulkan handles for GPU filter context construction.
+    /// Returns `None` if Vulkan interop was not initialized.
+    pub fn vulkan_handles(&self) -> Option<&VulkanHandles> {
+        self.runtime.as_ref()?.vulkan_handles.as_ref()
+    }
+
+    /// Ensure a DMA-BUF exportable filter image exists for the given slot
+    /// at the given dimensions and return the image info + DMA-BUF fd.
+    ///
+    /// The filter image is lazily created and re-created when dimensions change.
+    pub fn ensure_filter_image(
+        &mut self,
+        slot: SurfaceSlot,
+        width: u32,
+        height: u32,
+    ) -> Option<&ExportableImage> {
+        let runtime = self.runtime.as_mut()?;
+        let handles = runtime.vulkan_handles.as_ref()?;
+        let key = slot.index();
+
+        let needs_recreate = runtime
+            .filter_images
+            .get(&key)
+            .is_none_or(|img| img.width != width || img.height != height);
+
+        if needs_recreate {
+            // Destroy old image if it exists.
+            if let Some(old) = runtime.filter_images.remove(&key) {
+                unsafe { old.destroy(&handles.device_fn) };
+            }
+            match unsafe { crate::gpu_interop::create_exportable_image(handles, width, height) } {
+                Ok(img) => {
+                    runtime.filter_images.insert(key, img);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create exportable filter image: {:?}", e);
+                    return None;
+                }
+            }
+        }
+
+        runtime.filter_images.get(&key)
+    }
+
+    /// Export a DMA-BUF fd for a filter image at the given slot.
+    pub fn export_filter_dma_buf_fd(&self, slot: SurfaceSlot) -> Option<std::os::fd::RawFd> {
+        let runtime = self.runtime.as_ref()?;
+        let handles = runtime.vulkan_handles.as_ref()?;
+        let img = runtime.filter_images.get(&slot.index())?;
+        unsafe { crate::gpu_interop::export_dma_buf_fd(handles, img.memory).ok() }
+    }
+
+    /// Apply GPU filters to a rendered surface using FFI plugin vtables.
+    ///
+    /// This copies the surface to the exportable filter image, calls each
+    /// plugin's `apply_filter_gpu` FFI function, then copies the result back.
+    ///
+    /// `filter_fns` is a list of (filter_id, apply_fn) pairs from loaded FFI plugins.
+    pub fn apply_gpu_filters_ffi(
+        &mut self,
+        slot: SurfaceSlot,
+        filter_fns: &[(
+            &str,
+            extern "C" fn(
+                abi_stable::std_types::RString,
+                *const plugin_api::ffi::GpuFilterContextFFI,
+            ) -> bool,
+        )],
+    ) -> bool {
+        if filter_fns.is_empty() {
+            return false;
+        }
+
+        let runtime = match self.runtime.as_mut() {
+            Some(r) => r,
+            None => return false,
+        };
+
+        let handles = match &runtime.vulkan_handles {
+            Some(h) => h,
+            None => return false,
+        };
+
+        let surface = match runtime.surfaces.get(&slot.index()) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let (sw, sh) = (surface.width, surface.height);
+
+        // Ensure filter image exists at the right size.
+        let key = slot.index();
+        let needs_recreate = runtime
+            .filter_images
+            .get(&key)
+            .is_none_or(|img| img.width != sw || img.height != sh);
+
+        if needs_recreate {
+            if let Some(old) = runtime.filter_images.remove(&key) {
+                unsafe { old.destroy(&handles.device_fn) };
+            }
+            match unsafe { crate::gpu_interop::create_exportable_image(handles, sw, sh) } {
+                Ok(img) => {
+                    runtime.filter_images.insert(key, img);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create exportable filter image: {:?}", e);
+                    return false;
+                }
+            }
+        }
+
+        // Flush all wgpu work before using raw Vulkan commands.
+        let _ = runtime.device.poll(wgpu::PollType::wait_indefinitely());
+
+        // Get raw VkImage from the wgpu surface texture.
+        let surface_vk_image =
+            match unsafe { crate::gpu_interop::get_surface_vk_image(&surface.texture) } {
+                Some(img) => img,
+                None => return false,
+            };
+
+        let filter_image = runtime.filter_images.get(&key).unwrap();
+
+        // Copy surface → filter image
+        if let Err(e) = unsafe {
+            crate::gpu_interop::copy_surface_to_filter(handles, surface_vk_image, filter_image)
+        } {
+            tracing::error!("copy_surface_to_filter failed: {:?}", e);
+            return false;
+        }
+
+        // Build the GPU filter context for FFI plugins.
+        let done_fence = unsafe {
+            handles
+                .device_fn
+                .create_fence(&ash::vk::FenceCreateInfo::default(), None)
+        };
+        let done_fence = match done_fence {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("Failed to create done fence: {:?}", e);
+                return false;
+            }
+        };
+
+        let ctx = plugin_api::ffi::GpuFilterContextFFI {
+            vk_device: handles.device_fn.handle().as_raw(),
+            vk_physical_device: handles.physical_device.as_raw(),
+            vk_queue: handles.queue.as_raw(),
+            queue_family_index: handles.queue_family_index,
+            vk_image: filter_image.image.as_raw(),
+            width: filter_image.width,
+            height: filter_image.height,
+            vk_format: filter_image.format.as_raw() as u32,
+            vk_done_fence: done_fence.as_raw(),
+        };
+
+        // Call each plugin's GPU filter function.
+        let mut any_applied = false;
+        for (filter_id, apply_fn) in filter_fns {
+            let id = abi_stable::std_types::RString::from(*filter_id);
+            if apply_fn(id, &ctx as *const _) {
+                // Wait for the plugin to signal the done fence.
+                unsafe {
+                    let _ = handles
+                        .device_fn
+                        .wait_for_fences(&[done_fence], true, u64::MAX);
+                    let _ = handles.device_fn.reset_fences(&[done_fence]);
+                }
+                any_applied = true;
+            }
+        }
+
+        // Clean up the done fence.
+        unsafe { handles.device_fn.destroy_fence(done_fence, None) };
+
+        if !any_applied {
+            return false;
+        }
+
+        // Copy filter image → surface
+        if let Err(e) = unsafe {
+            crate::gpu_interop::copy_filter_to_surface(handles, filter_image, surface_vk_image)
+        } {
+            tracing::error!("copy_filter_to_surface failed: {:?}", e);
+            return false;
+        }
+
+        true
     }
 
     pub fn install(ui: &AppWindow, renderer: Rc<RefCell<Self>>) -> Result<()> {
@@ -1004,6 +1262,98 @@ impl GpuRenderer {
             cache: None,
         });
 
+        // ----- Post-process pipeline (fullscreen filter pass) -----
+        let pp_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("post-process-shader"),
+            source: wgpu::ShaderSource::Wgsl(POST_PROCESS_SHADER.into()),
+        });
+
+        let post_process_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("post-process-bind-group-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let pp_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("post-process-pipeline-layout"),
+            bind_group_layouts: &[&post_process_bind_group_layout],
+            immediate_size: 0,
+        });
+
+        let post_process_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("post-process-grayscale-pipeline"),
+                layout: Some(&pp_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &pp_shader,
+                    entry_point: Some("vs_fullscreen"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &pp_shader,
+                    entry_point: Some("fs_grayscale"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+
+        let post_process_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("post-process-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let post_process_uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("post-process-uniforms"),
+            size: 16, // PostProcessUniforms: 4 floats
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Extract raw Vulkan handles for GPU filter plugin interop.
+        let vulkan_handles = unsafe { crate::gpu_interop::extract_vulkan_handles(device) };
+        if vulkan_handles.is_none() {
+            tracing::warn!("Failed to extract Vulkan handles for GPU filter interop");
+        }
+
         self.runtime = Some(GpuRuntime {
             device: device.clone(),
             queue: queue.clone(),
@@ -1016,10 +1366,24 @@ impl GpuRenderer {
             vertex_capacity: 6,
             adjustments_buffer,
             surfaces: HashMap::new(),
+            post_process_pipeline,
+            post_process_bind_group_layout,
+            post_process_sampler,
+            post_process_uniforms_buffer,
+            post_process_scratch: HashMap::new(),
+            vulkan_handles,
+            filter_images: HashMap::new(),
         });
     }
 
     fn teardown(&mut self) {
+        if let Some(runtime) = &self.runtime {
+            if let Some(handles) = &runtime.vulkan_handles {
+                for (_, img) in &runtime.filter_images {
+                    unsafe { img.destroy(&handles.device_fn) };
+                }
+            }
+        }
         self.runtime = None;
         self.pending_frames.clear();
         self.tile_arrays.clear();
@@ -1054,7 +1418,8 @@ impl GpuRenderer {
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1171,6 +1536,7 @@ impl GpuRenderer {
                     SurfaceSlot(slot_index),
                     frame,
                     frame_id,
+                    self.gpu_filters_enabled,
                 );
                 self.last_rendered_fingerprint.insert(slot_index, fp);
             }
@@ -1188,6 +1554,7 @@ impl GpuRenderer {
         slot: SurfaceSlot,
         frame: QueuedFrame,
         frame_id: u64,
+        gpu_filters_enabled: bool,
     ) {
         let Some(surface_view) = runtime
             .surfaces
@@ -1401,6 +1768,135 @@ impl GpuRenderer {
         }
 
         runtime.queue.submit(Some(encoder.finish()));
+
+        // ----- Post-process pass (e.g. grayscale viewport filter) ----------
+        if gpu_filters_enabled {
+            let surface = runtime.surfaces.get(&slot.index()).unwrap();
+            let (sw, sh) = (surface.width, surface.height);
+
+            // Ensure scratch texture exists and matches surface dimensions.
+            let scratch_key = slot.index();
+            let needs_recreate = runtime
+                .post_process_scratch
+                .get(&scratch_key)
+                .is_none_or(|s| s.width != sw || s.height != sh);
+            if needs_recreate {
+                let tex = runtime.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("post-process-scratch"),
+                    size: wgpu::Extent3d {
+                        width: sw,
+                        height: sh,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                runtime.post_process_scratch.insert(
+                    scratch_key,
+                    ImportedSurface {
+                        texture: tex,
+                        view,
+                        width: sw,
+                        height: sh,
+                    },
+                );
+            }
+
+            let scratch = runtime.post_process_scratch.get(&scratch_key).unwrap();
+
+            // Update uniforms: enabled = 1.0
+            runtime.queue.write_buffer(
+                &runtime.post_process_uniforms_buffer,
+                0,
+                bytemuck::bytes_of(&[1.0f32, 0.0f32, 0.0f32, 0.0f32]),
+            );
+
+            // Bind group: surface texture as input.
+            let bind_group =
+                runtime
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("post-process-bind-group"),
+                        layout: &runtime.post_process_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&surface_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(
+                                    &runtime.post_process_sampler,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: runtime
+                                    .post_process_uniforms_buffer
+                                    .as_entire_binding(),
+                            },
+                        ],
+                    });
+
+            let mut pp_encoder =
+                runtime
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("post-process-encoder"),
+                    });
+
+            {
+                let mut pass = pp_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("post-process-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &scratch.view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&runtime.post_process_pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            // Copy scratch back to surface.
+            let surface_tex = &runtime.surfaces.get(&slot.index()).unwrap().texture;
+            pp_encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &scratch.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: surface_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: sw,
+                    height: sh,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            runtime.queue.submit(Some(pp_encoder.finish()));
+        }
     }
 }
 

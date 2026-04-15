@@ -28,9 +28,12 @@
 
 pub mod ffi;
 pub mod manifest;
+pub mod viewport_filter;
 
 pub use manifest::PluginManifest;
 pub use manifest::{ManifestToolbarButton, PluginLanguage};
+pub use viewport_filter::ViewportFilter;
+pub use viewport_filter::{GpuFilterContext, DmaBufDescriptor};
 
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -170,8 +173,9 @@ pub struct PluginDescriptor {
 
 impl PluginDescriptor {
     /// Resolve the `entry_ui` path against the plugin root.
-    pub fn resolve_ui_path(&self) -> PathBuf {
-        self.root.join(&self.manifest.entry_ui)
+    /// Returns `None` if the plugin has no UI entry.
+    pub fn resolve_ui_path(&self) -> Option<PathBuf> {
+        self.manifest.entry_ui.as_ref().map(|ui| self.root.join(ui))
     }
 }
 
@@ -204,8 +208,8 @@ mod tests {
                 id: "my_plugin".into(),
                 name: "My Plugin".into(),
                 version: "0.1.0".into(),
-                entry_ui: "ui/panel.slint".into(),
-                entry_component: "Panel".into(),
+                entry_ui: Some("ui/panel.slint".into()),
+                entry_component: Some("Panel".into()),
                 icon: None,
                 language: Default::default(),
                 entry_script: None,
@@ -214,7 +218,7 @@ mod tests {
         };
         assert_eq!(
             desc.resolve_ui_path(),
-            PathBuf::from("/plugins/my_plugin/ui/panel.slint")
+            Some(PathBuf::from("/plugins/my_plugin/ui/panel.slint"))
         );
     }
 }

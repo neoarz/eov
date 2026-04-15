@@ -46,6 +46,68 @@ pub struct PluginVTable {
     /// `callback_name` is the kebab-case name of the callback as declared in
     /// the `.slint` file.
     pub on_ui_callback: extern "C" fn(callback_name: RString),
+
+    /// Returns viewport filter descriptors this plugin provides.
+    /// May return an empty vec if the plugin has no viewport filters.
+    pub get_viewport_filters: extern "C" fn() -> RVec<ViewportFilterFFI>,
+
+    /// Apply a CPU viewport filter in-place.
+    /// `filter_id` identifies which filter to apply.
+    /// `rgba_data` is a mutable pointer to width*height*4 bytes of RGBA8 data.
+    /// Returns `true` if the filter was applied successfully.
+    pub apply_filter_cpu:
+        extern "C" fn(filter_id: RString, rgba_data: *mut u8, len: u32, width: u32, height: u32) -> bool,
+
+    /// Apply a GPU viewport filter using raw Vulkan handles.
+    /// `filter_id` identifies which filter to apply.
+    /// `ctx` is a pointer to a `GpuFilterContextFFI` struct with the Vulkan
+    /// device, image, and sync fence. The plugin must signal the fence when done.
+    /// Returns `true` if the filter was applied successfully.
+    pub apply_filter_gpu: extern "C" fn(filter_id: RString, ctx: *const GpuFilterContextFFI) -> bool,
+
+    /// Enable or disable a viewport filter.
+    pub set_filter_enabled: extern "C" fn(filter_id: RString, enabled: bool),
+}
+
+/// FFI-safe GPU filter context passed from the host to the plugin.
+///
+/// Contains raw Vulkan handles for zero-copy GPU memory access. The plugin
+/// creates its own Vulkan pipeline on the shared device and submits commands
+/// that operate on `vk_image`. The plugin **must** signal `vk_done_fence`
+/// when its GPU work is complete.
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct GpuFilterContextFFI {
+    /// `VkDevice` handle (as `u64`).
+    pub vk_device: u64,
+    /// `VkPhysicalDevice` handle (as `u64`).
+    pub vk_physical_device: u64,
+    /// `VkQueue` handle the plugin may submit to.
+    pub vk_queue: u64,
+    /// Queue family index for `vk_queue`.
+    pub queue_family_index: u32,
+    /// `VkImage` handle for the RGBA8 frame.
+    pub vk_image: u64,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// `VkFormat` value (e.g. `VK_FORMAT_R8G8B8A8_UNORM` = 37).
+    pub vk_format: u32,
+    /// `VkFence` handle — the plugin **must** signal this when its GPU
+    /// commands have finished executing on `vk_image`.
+    pub vk_done_fence: u64,
+}
+
+/// FFI-safe viewport filter descriptor.
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct ViewportFilterFFI {
+    pub filter_id: RString,
+    pub name: RString,
+    pub supports_cpu: bool,
+    pub supports_gpu: bool,
+    pub enabled: bool,
 }
 
 /// The type of the factory function each plugin exports.

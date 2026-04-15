@@ -144,12 +144,17 @@ pub fn spawn_python_plugin(script_path: &Path, plugin_root: &Path) {
         std::ffi::OsString::from("python3")
     };
 
-    match std::process::Command::new(&python)
-        .arg(script_path)
+    let mut cmd = std::process::Command::new(&python);
+    cmd.arg(script_path)
         .current_dir(plugin_root)
-        .stdin(std::process::Stdio::null())
-        .spawn()
-    {
+        .stdin(std::process::Stdio::null());
+
+    // Pass the extension host address if available.
+    if let Ok(host_addr) = std::env::var("EOV_EXTENSION_HOST") {
+        cmd.env("EOV_EXTENSION_HOST", &host_addr);
+    }
+
+    match cmd.spawn() {
         Ok(child) => {
             info!("Python plugin process started (pid {})", child.id());
         }
@@ -175,12 +180,17 @@ pub fn spawn_rust_plugin_window(plugin_root: &Path) {
         plugin_root.display()
     );
 
-    match std::process::Command::new(&eov_exe)
-        .arg("plugin-window")
+    let mut cmd = std::process::Command::new(&eov_exe);
+    cmd.arg("plugin-window")
         .arg(plugin_root)
-        .stdin(std::process::Stdio::null())
-        .spawn()
-    {
+        .stdin(std::process::Stdio::null());
+
+    // Pass the extension host address if available.
+    if let Ok(host_addr) = std::env::var("EOV_EXTENSION_HOST") {
+        cmd.env("EOV_EXTENSION_HOST", &host_addr);
+    }
+
+    match cmd.spawn() {
         Ok(child) => {
             info!("Rust plugin window process started (pid {})", child.id());
         }
@@ -224,11 +234,13 @@ pub fn run_plugin_window_standalone(plugin_root: &Path) -> anyhow::Result<()> {
         (*sym)()
     };
 
-    let ui_path = manifest.resolve_entry_ui(plugin_root);
+    let ui_path = manifest.resolve_entry_ui(plugin_root)
+        .ok_or_else(|| anyhow::anyhow!("Plugin '{}' has no entry_ui", manifest.id))?;
     let req = WindowOpenRequest {
         plugin_id: manifest.id.clone(),
         ui_path,
-        component: manifest.entry_component.clone(),
+        component: manifest.entry_component.clone()
+            .ok_or_else(|| anyhow::anyhow!("Plugin '{}' has no entry_component", manifest.id))?,
     };
 
     // Open the window directly (no deferral needed — we own the event loop).

@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            libegl1-mesa-dev \
+            libvulkan-dev \
             libfontconfig-dev \
             libfreetype6-dev \
             libopenslide-dev \

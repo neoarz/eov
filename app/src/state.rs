@@ -1,6 +1,8 @@
 //! Application state management
 
 use crate::tile_loader::TileLoader;
+use crate::extension_host::SharedExtensionHostState;
+use crate::viewport_filter::SharedFilterChain;
 use common::{
     FilteringMode, MeasurementUnit, RenderBackend, StainNormalization, TileManager, ViewportState,
     WsiFile,
@@ -471,6 +473,12 @@ pub struct AppState {
     pub needs_render: bool,
     /// Whether the render loop timer is currently running
     pub render_loop_running: bool,
+    /// In-process viewport filter chain (FFI plugins).
+    pub filter_chain: SharedFilterChain,
+    /// Shared extension host state (remote gRPC filters).
+    pub extension_host_state: SharedExtensionHostState,
+    /// Tokio runtime handle for async gRPC calls.
+    pub tokio_handle: Option<tokio::runtime::Handle>,
 }
 
 impl AppState {
@@ -503,6 +511,9 @@ impl AppState {
             show_metadata: false,
             needs_render: true,
             render_loop_running: false,
+            filter_chain: crate::viewport_filter::new_shared_filter_chain(),
+            extension_host_state: crate::extension_host::new_shared_state(),
+            tokio_handle: None,
         }
     }
 
