@@ -22,7 +22,7 @@ The name `eov` has no canonical expansion.
 
 ## Installation
 
-Windows, macOS, and Linux are supported. Prebuilt binaries can be downloaded from the [Release page](https://github.com/eosin-platform/eov/releases/tag/v0.2.10).
+Windows, macOS, and Linux are supported. Prebuilt binaries can be downloaded from the [Release page](https://github.com/eosin-platform/eov/releases/tag/v0.2.11).
 
 Both x86_64 and arm64 builds for all supported platforms are available. Make you sure you select the right architecture!
 
@@ -31,7 +31,7 @@ There are two methods of installation: AppImage and Flatpak. The AppImage is dir
 
 ```bash
 # Download the binary
-curl -L -o eov https://github.com/eosin-platform/eov/releases/download/v0.2.10/eov-v0.2.10-linux-x86_64.AppImage
+curl -L -o eov https://github.com/eosin-platform/eov/releases/download/v0.2.11/eov-v0.2.11-linux-x86_64.AppImage
 
 # Make it executable (ensure correct filename!)
 chmod +x ./eov
