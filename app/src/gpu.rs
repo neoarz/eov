@@ -1072,7 +1072,11 @@ impl GpuRenderer {
         // Skip the vertex rebuild and render pass if the frame is identical
         // to what was last rendered on this slot.
         if !surface_recreated {
-            let fp = frame.fingerprint();
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            hasher.write_u64(frame.fingerprint());
+            self.gpu_filters_enabled.hash(&mut hasher);
+            let fp = hasher.finish();
             if self
                 .last_rendered_fingerprint
                 .get(&slot.index())
@@ -1528,7 +1532,11 @@ impl GpuRenderer {
 
         for (slot_index, frame) in pending_frames {
             if runtime.surfaces.contains_key(&slot_index) {
-                let fp = frame.fingerprint();
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                hasher.write_u64(frame.fingerprint());
+                self.gpu_filters_enabled.hash(&mut hasher);
+                let fp = hasher.finish();
                 Self::render_frame(
                     runtime,
                     &mut self.tile_arrays,
