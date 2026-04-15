@@ -88,53 +88,54 @@ pub(crate) unsafe fn extract_vulkan_handles(wgpu_device: &wgpu::Device) -> Optio
 
     #[cfg(target_os = "linux")]
     {
-    // Access the wgpu-hal Vulkan device.
-    let hal_device_guard = unsafe { wgpu_device.as_hal::<wgpu::hal::api::Vulkan>()? };
-    let raw_device: ash::Device = hal_device_guard.raw_device().clone();
-    let physical_device = hal_device_guard.raw_physical_device();
+        // Access the wgpu-hal Vulkan device.
+        let hal_device_guard = unsafe { wgpu_device.as_hal::<wgpu::hal::api::Vulkan>()? };
+        let raw_device: ash::Device = hal_device_guard.raw_device().clone();
+        let physical_device = hal_device_guard.raw_physical_device();
 
-    // The shared instance gives us the ash::Instance for extension loading.
-    let shared_instance = hal_device_guard.shared_instance();
-    let ash_instance = shared_instance.raw_instance();
+        // The shared instance gives us the ash::Instance for extension loading.
+        let shared_instance = hal_device_guard.shared_instance();
+        let ash_instance = shared_instance.raw_instance();
 
-    // Queue family index and raw VkQueue are both on the HAL device.
-    let queue_family_index = hal_device_guard.queue_family_index();
-    let raw_queue = hal_device_guard.raw_queue();
+        // Queue family index and raw VkQueue are both on the HAL device.
+        let queue_family_index = hal_device_guard.queue_family_index();
+        let raw_queue = hal_device_guard.raw_queue();
 
-    let ash_instance_clone = ash_instance.clone();
+        let ash_instance_clone = ash_instance.clone();
 
-    // Extension loaders for external memory/fence operations.
-    let external_memory_fd = ash::khr::external_memory_fd::Device::new(ash_instance, &raw_device);
-    let external_fence_fd = ash::khr::external_fence_fd::Device::new(ash_instance, &raw_device);
+        // Extension loaders for external memory/fence operations.
+        let external_memory_fd =
+            ash::khr::external_memory_fd::Device::new(ash_instance, &raw_device);
+        let external_fence_fd = ash::khr::external_fence_fd::Device::new(ash_instance, &raw_device);
 
-    // Create a command pool + buffer for filter copy operations.
-    let pool_info = vk::CommandPoolCreateInfo::default()
-        .queue_family_index(queue_family_index)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    let command_pool = unsafe { raw_device.create_command_pool(&pool_info, None).ok()? };
+        // Create a command pool + buffer for filter copy operations.
+        let pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool = unsafe { raw_device.create_command_pool(&pool_info, None).ok()? };
 
-    let alloc_info = vk::CommandBufferAllocateInfo::default()
-        .command_pool(command_pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(1);
-    let command_buffers = unsafe { raw_device.allocate_command_buffers(&alloc_info).ok()? };
-    let command_buffer = command_buffers[0];
+        let alloc_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let command_buffers = unsafe { raw_device.allocate_command_buffers(&alloc_info).ok()? };
+        let command_buffer = command_buffers[0];
 
-    let fence_info = vk::FenceCreateInfo::default();
-    let copy_fence = unsafe { raw_device.create_fence(&fence_info, None).ok()? };
+        let fence_info = vk::FenceCreateInfo::default();
+        let copy_fence = unsafe { raw_device.create_fence(&fence_info, None).ok()? };
 
-    Some(VulkanHandles {
-        instance_fn: ash_instance_clone,
-        device_fn: raw_device,
-        physical_device,
-        queue: raw_queue,
-        queue_family_index,
-        external_memory_fd,
-        external_fence_fd,
-        command_pool,
-        command_buffer,
-        copy_fence,
-    })
+        Some(VulkanHandles {
+            instance_fn: ash_instance_clone,
+            device_fn: raw_device,
+            physical_device,
+            queue: raw_queue,
+            queue_family_index,
+            external_memory_fd,
+            external_fence_fd,
+            command_pool,
+            command_buffer,
+            copy_fence,
+        })
     }
 }
 
@@ -615,7 +616,7 @@ pub(crate) unsafe fn get_surface_vk_image(texture: &wgpu::Texture) -> Option<vk:
 
     #[cfg(target_os = "linux")]
     {
-    let hal_texture = unsafe { texture.as_hal::<wgpu::hal::api::Vulkan>()? };
-    Some(unsafe { hal_texture.raw_handle() })
+        let hal_texture = unsafe { texture.as_hal::<wgpu::hal::api::Vulkan>()? };
+        Some(unsafe { hal_texture.raw_handle() })
     }
 }
