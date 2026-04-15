@@ -51,7 +51,11 @@ pub fn discover_plugins(plugin_dir: &Path) -> Vec<PluginDescriptor> {
 
         match try_load_descriptor(&path) {
             Ok(desc) => {
-                info!("Discovered plugin '{}' at {}", desc.manifest.id, path.display());
+                info!(
+                    "Discovered plugin '{}' at {}",
+                    desc.manifest.id,
+                    path.display()
+                );
                 descriptors.push(desc);
             }
             Err(e) => {
@@ -92,7 +96,11 @@ entry_component = "Panel"
         );
         fs::write(dir.join("plugin.toml"), manifest).unwrap();
         fs::create_dir_all(dir.join("ui")).unwrap();
-        fs::write(dir.join("ui/panel.slint"), "export component Panel inherits Window {}").unwrap();
+        fs::write(
+            dir.join("ui/panel.slint"),
+            "export component Panel inherits Window {}",
+        )
+        .unwrap();
     }
 
     #[test]

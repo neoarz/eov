@@ -33,7 +33,7 @@ pub mod viewport_filter;
 pub use manifest::PluginManifest;
 pub use manifest::{ManifestToolbarButton, PluginLanguage};
 pub use viewport_filter::ViewportFilter;
-pub use viewport_filter::{GpuFilterContext, DmaBufDescriptor};
+pub use viewport_filter::{DmaBufDescriptor, GpuFilterContext};
 
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -45,24 +45,15 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum PluginError {
     #[error("plugin manifest error in '{plugin_id}': {message}")]
-    Manifest {
-        plugin_id: String,
-        message: String,
-    },
+    Manifest { plugin_id: String, message: String },
     #[error("plugin '{plugin_id}' missing required file: {path}")]
-    MissingFile {
-        plugin_id: String,
-        path: PathBuf,
-    },
+    MissingFile { plugin_id: String, path: PathBuf },
     #[error("duplicate plugin id: '{0}'")]
     DuplicateId(String),
     #[error("duplicate toolbar button id: '{0}'")]
     DuplicateButtonId(String),
     #[error("plugin activation error in '{plugin_id}': {message}")]
-    Activation {
-        plugin_id: String,
-        message: String,
-    },
+    Activation { plugin_id: String, message: String },
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]

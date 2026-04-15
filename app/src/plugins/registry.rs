@@ -6,7 +6,7 @@
 //! runtime. A future iteration can replace static registration with dynamic
 //! library loading.
 
-use plugin_api::{Plugin, PluginResult};
+use plugin_api::Plugin;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -25,7 +25,8 @@ impl PluginRegistry {
     }
 
     /// Register a plugin by its manifest id.
-    pub fn register(&mut self, plugin: Arc<dyn Plugin>) -> PluginResult<()> {
+    #[cfg(test)]
+    pub fn register(&mut self, plugin: Arc<dyn Plugin>) -> plugin_api::PluginResult<()> {
         let id = plugin.manifest().id.clone();
         if self.plugins.contains_key(&id) {
             return Err(plugin_api::PluginError::DuplicateId(id));
@@ -37,18 +38,5 @@ impl PluginRegistry {
     /// Look up a plugin by id.
     pub fn get(&self, id: &str) -> Option<&Arc<dyn Plugin>> {
         self.plugins.get(id)
-    }
-
-    /// Iterate over all registered plugins.
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Arc<dyn Plugin>)> {
-        self.plugins.iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.plugins.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.plugins.is_empty()
     }
 }

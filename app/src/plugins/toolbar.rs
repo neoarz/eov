@@ -44,12 +44,18 @@ impl ToolbarManager {
         self.buttons.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.buttons.is_empty()
     }
 
     /// Find a button by its composite key.
-    pub fn find_button(&self, plugin_id: &str, button_id: &str) -> Option<&ToolbarButtonRegistration> {
+    #[cfg(test)]
+    pub fn find_button(
+        &self,
+        plugin_id: &str,
+        button_id: &str,
+    ) -> Option<&ToolbarButtonRegistration> {
         self.buttons
             .iter()
             .find(|b| b.plugin_id == plugin_id && b.button_id == button_id)

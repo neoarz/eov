@@ -5,8 +5,8 @@
 //! a [`PluginVTable`], and the host loads it with
 //! [`abi_stable::library::RawLibrary`].
 
-use abi_stable::std_types::{RString, RVec};
 use abi_stable::StableAbi;
+use abi_stable::std_types::{RString, RVec};
 
 /// FFI-safe toolbar button registration data.
 #[repr(C)]
@@ -55,15 +55,21 @@ pub struct PluginVTable {
     /// `filter_id` identifies which filter to apply.
     /// `rgba_data` is a mutable pointer to width*height*4 bytes of RGBA8 data.
     /// Returns `true` if the filter was applied successfully.
-    pub apply_filter_cpu:
-        extern "C" fn(filter_id: RString, rgba_data: *mut u8, len: u32, width: u32, height: u32) -> bool,
+    pub apply_filter_cpu: extern "C" fn(
+        filter_id: RString,
+        rgba_data: *mut u8,
+        len: u32,
+        width: u32,
+        height: u32,
+    ) -> bool,
 
     /// Apply a GPU viewport filter using raw Vulkan handles.
     /// `filter_id` identifies which filter to apply.
     /// `ctx` is a pointer to a `GpuFilterContextFFI` struct with the Vulkan
     /// device, image, and sync fence. The plugin must signal the fence when done.
     /// Returns `true` if the filter was applied successfully.
-    pub apply_filter_gpu: extern "C" fn(filter_id: RString, ctx: *const GpuFilterContextFFI) -> bool,
+    pub apply_filter_gpu:
+        extern "C" fn(filter_id: RString, ctx: *const GpuFilterContextFFI) -> bool,
 
     /// Enable or disable a viewport filter.
     pub set_filter_enabled: extern "C" fn(filter_id: RString, enabled: bool),

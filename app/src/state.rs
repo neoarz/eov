@@ -1,7 +1,7 @@
 //! Application state management
 
-use crate::tile_loader::TileLoader;
 use crate::extension_host::SharedExtensionHostState;
+use crate::tile_loader::TileLoader;
 use crate::viewport_filter::SharedFilterChain;
 use common::{
     FilteringMode, MeasurementUnit, RenderBackend, StainNormalization, TileManager, ViewportState,

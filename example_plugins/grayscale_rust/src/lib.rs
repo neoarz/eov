@@ -14,8 +14,8 @@ use ash::vk::Handle;
 use plugin_api::ffi::{
     ActionResponseFFI, GpuFilterContextFFI, PluginVTable, ToolbarButtonFFI, ViewportFilterFFI,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Smiley face SVG icon for the toolbar button.
 const SMILEY_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>"#;
@@ -84,10 +84,7 @@ extern "C" fn apply_filter_cpu_ffi(
     true
 }
 
-extern "C" fn apply_filter_gpu_ffi(
-    _filter_id: RString,
-    ctx: *const GpuFilterContextFFI,
-) -> bool {
+extern "C" fn apply_filter_gpu_ffi(_filter_id: RString, ctx: *const GpuFilterContextFFI) -> bool {
     if !ENABLED.load(Ordering::Relaxed) || ctx.is_null() {
         return false;
     }
@@ -131,7 +128,10 @@ mod gpu_grayscale {
         let mut guard = PIPELINE.lock().unwrap();
 
         // Recreate if the device changed (shouldn't happen normally).
-        if guard.as_ref().is_some_and(|s| s.device_handle != ctx.vk_device) {
+        if guard
+            .as_ref()
+            .is_some_and(|s| s.device_handle != ctx.vk_device)
+        {
             // Drop old state.
             if let Some(old) = guard.take() {
                 unsafe { cleanup(&old) };
@@ -315,8 +315,8 @@ mod gpu_grayscale {
             );
 
             // Dispatch: ceil(width/16) x ceil(height/16)
-            let gx = (ctx.width + 15) / 16;
-            let gy = (ctx.height + 15) / 16;
+            let gx = ctx.width.div_ceil(16);
+            let gy = ctx.height.div_ceil(16);
             device.cmd_dispatch(cmd, gx, gy, 1);
 
             device.end_command_buffer(cmd)?;
@@ -384,22 +384,12 @@ mod tests {
     fn grayscale_conversion() {
         // RGBA pixel: red
         let mut buf = vec![255u8, 0, 0, 255];
-        apply_filter_cpu_ffi(
-            RString::from(FILTER_ID),
-            buf.as_mut_ptr(),
-            4,
-            1, 1,
-        );
+        apply_filter_cpu_ffi(RString::from(FILTER_ID), buf.as_mut_ptr(), 4, 1, 1);
         // Grayscale not applied because ENABLED is false by default
         assert_eq!(buf, [255, 0, 0, 255]);
 
         ENABLED.store(true, Ordering::Relaxed);
-        apply_filter_cpu_ffi(
-            RString::from(FILTER_ID),
-            buf.as_mut_ptr(),
-            4,
-            1, 1,
-        );
+        apply_filter_cpu_ffi(RString::from(FILTER_ID), buf.as_mut_ptr(), 4, 1, 1);
         // lum = 0.299 * 255 ≈ 76
         let lum = (0.299 * 255.0) as u8;
         assert_eq!(buf[0], lum);

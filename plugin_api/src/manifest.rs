@@ -124,13 +124,13 @@ impl PluginManifest {
                 });
             }
         }
-        if let Some(ref entry_component) = self.entry_component {
-            if entry_component.is_empty() {
-                return Err(PluginError::Manifest {
-                    plugin_id: self.id.clone(),
-                    message: "'entry_component' must not be empty when specified".into(),
-                });
-            }
+        if let Some(ref entry_component) = self.entry_component
+            && entry_component.is_empty()
+        {
+            return Err(PluginError::Manifest {
+                plugin_id: self.id.clone(),
+                message: "'entry_component' must not be empty when specified".into(),
+            });
         }
         // Python plugins require entry_script
         if self.language == PluginLanguage::Python {
@@ -159,10 +159,7 @@ impl PluginManifest {
             if path.is_absolute() {
                 return Err(PluginError::Manifest {
                     plugin_id: self.id.clone(),
-                    message: format!(
-                        "icon file path must be relative, got '{}'",
-                        path.display()
-                    ),
+                    message: format!("icon file path must be relative, got '{}'", path.display()),
                 });
             }
             if path.to_string_lossy().contains("..") {
@@ -186,13 +183,13 @@ impl PluginManifest {
 
     /// Validate that referenced files actually exist on disk.
     pub fn validate_files(&self, plugin_root: &Path) -> PluginResult<()> {
-        if let Some(ui_path) = self.resolve_entry_ui(plugin_root) {
-            if !ui_path.exists() {
-                return Err(PluginError::MissingFile {
-                    plugin_id: self.id.clone(),
-                    path: ui_path,
-                });
-            }
+        if let Some(ui_path) = self.resolve_entry_ui(plugin_root)
+            && !ui_path.exists()
+        {
+            return Err(PluginError::MissingFile {
+                plugin_id: self.id.clone(),
+                path: ui_path,
+            });
         }
         if let Some(IconDescriptor::File { path }) = &self.icon {
             let icon_path = plugin_root.join(path);
@@ -303,7 +300,10 @@ entry_component = "Evil"
     fn resolve_entry_ui_relative_to_root() {
         let m = PluginManifest::from_toml(VALID_TOML, "test").unwrap();
         let resolved = m.resolve_entry_ui(Path::new("/plugins/test_plugin"));
-        assert_eq!(resolved, Some(PathBuf::from("/plugins/test_plugin/ui/panel.slint")));
+        assert_eq!(
+            resolved,
+            Some(PathBuf::from("/plugins/test_plugin/ui/panel.slint"))
+        );
     }
 
     #[test]

@@ -23,7 +23,6 @@ use tracing::{info, warn};
 pub(crate) struct RemoteFilter {
     pub name: String,
     pub supports_cpu: bool,
-    pub supports_gpu: bool,
     pub enabled: bool,
     /// Channel to send CPU filter requests to the connected plugin.
     pub cpu_request_tx: Option<mpsc::Sender<CpuFilterRequest>>,
@@ -48,38 +47,6 @@ impl ExtensionHostState {
         Self {
             filters: HashMap::new(),
         }
-    }
-
-    /// Toggle the enabled state of any registered remote filter whose name
-    /// contains `name_substr`. Returns `true` if at least one filter was toggled.
-    #[allow(dead_code)]
-    pub fn toggle_filters_by_name(&mut self, name_substr: &str) -> bool {
-        let mut toggled = false;
-        for filter in self.filters.values_mut() {
-            if filter.name.to_lowercase().contains(&name_substr.to_lowercase()) {
-                filter.enabled = !filter.enabled;
-                info!(
-                    "Toggled remote filter '{}' -> enabled={}",
-                    filter.name, filter.enabled
-                );
-                toggled = true;
-            }
-        }
-        toggled
-    }
-
-    /// Returns `true` if any registered remote filter is enabled and supports CPU.
-    pub fn has_enabled_cpu_filters(&self) -> bool {
-        self.filters
-            .values()
-            .any(|f| f.enabled && f.supports_cpu)
-    }
-
-    /// Returns `true` if any registered remote filter is enabled and supports GPU.
-    pub fn has_enabled_gpu_filters(&self) -> bool {
-        self.filters
-            .values()
-            .any(|f| f.enabled && f.supports_gpu)
     }
 
     /// Returns `true` if any registered remote filter is enabled.
@@ -134,7 +101,6 @@ impl ExtensionHost for ExtensionHostService {
         let filter = RemoteFilter {
             name: req.name,
             supports_cpu: req.supports_cpu,
-            supports_gpu: req.supports_gpu,
             enabled: false,
             cpu_request_tx: None,
         };
@@ -256,8 +222,7 @@ impl ExtensionHost for ExtensionHostService {
         }
 
         // Output channel: frames pushed to plugin via the gRPC response stream.
-        let (out_tx, out_rx) =
-            mpsc::channel::<Result<ApplyFilterCpuResponse, Status>>(1);
+        let (out_tx, out_rx) = mpsc::channel::<Result<ApplyFilterCpuResponse, Status>>(1);
 
         let state_clone = self.state.clone();
         let fid = filter_id.clone();
@@ -353,7 +318,7 @@ pub(crate) fn apply_remote_cpu_filters(
     rgba_data: &mut [u8],
     width: u32,
     height: u32,
-    runtime: &tokio::runtime::Handle,
+    _runtime: &tokio::runtime::Handle,
 ) {
     let state = state.read();
     for (filter_id, filter) in &state.filters {
@@ -368,16 +333,16 @@ pub(crate) fn apply_remote_cpu_filters(
                 rgba_data: rgba_data.to_vec(),
                 response_tx: resp_tx,
             };
-            if tx.blocking_send(req).is_ok() {
-                if let Ok(result) = resp_rx.blocking_recv() {
-                    if result.len() == rgba_data.len() {
-                        rgba_data.copy_from_slice(&result);
-                    } else {
-                        warn!(
-                            "Remote filter '{}' ({}) returned wrong buffer size",
-                            filter.name, filter_id
-                        );
-                    }
+            if tx.blocking_send(req).is_ok()
+                && let Ok(result) = resp_rx.blocking_recv()
+            {
+                if result.len() == rgba_data.len() {
+                    rgba_data.copy_from_slice(&result);
+                } else {
+                    warn!(
+                        "Remote filter '{}' ({}) returned wrong buffer size",
+                        filter.name, filter_id
+                    );
                 }
             }
         }

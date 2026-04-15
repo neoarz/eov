@@ -16,43 +16,24 @@ pub mod manager;
 pub(crate) mod registry;
 pub mod toolbar;
 
-pub use host_context::AppHostContext;
 pub use manager::{ActionOutcome, PluginManager};
-pub use toolbar::ToolbarManager;
 
 use abi_stable::library::RawLibrary;
 use abi_stable::std_types::RString;
 use host_context::WindowOpenRequest;
 use plugin_api::ffi::{self, PluginVTable};
-use slint::{ComponentHandle, Timer};
+use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::path::Path;
-use std::time::Duration;
 use tracing::{error, info, warn};
 
 // Thread-local storage for plugin window handles so they are not dropped.
 thread_local! {
-    static PLUGIN_WINDOWS: RefCell<Vec<slint_interpreter::ComponentInstance>> = RefCell::new(Vec::new());
-}
-
-/// Schedule a plugin window to open on the next event loop tick.
-///
-/// Deferring avoids a wgpu surface conflict that occurs when creating a new
-/// window inside a Slint callback (the main window's swap chain gets
-/// invalidated before the current frame finishes).
-pub fn schedule_open_plugin_window(req: WindowOpenRequest, vtable: PluginVTable) {
-    Timer::single_shot(Duration::ZERO, move || {
-        if let Err(e) = open_plugin_window(&req, &vtable) {
-            error!("Failed to open plugin window: {e}");
-        }
-    });
+    static PLUGIN_WINDOWS: RefCell<Vec<slint_interpreter::ComponentInstance>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Open a plugin window using the Slint runtime interpreter.
-fn open_plugin_window(
-    req: &WindowOpenRequest,
-    vtable: &PluginVTable,
-) -> anyhow::Result<()> {
+fn open_plugin_window(req: &WindowOpenRequest, vtable: &PluginVTable) -> anyhow::Result<()> {
     info!(
         "Opening plugin window for '{}': {} (component: {})",
         req.plugin_id,
@@ -60,13 +41,19 @@ fn open_plugin_window(
         req.component
     );
 
-    let source = std::fs::read_to_string(&req.ui_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read plugin UI file {}: {e}", req.ui_path.display()))?;
+    let source = std::fs::read_to_string(&req.ui_path).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to read plugin UI file {}: {e}",
+            req.ui_path.display()
+        )
+    })?;
 
     let compiler = slint_interpreter::Compiler::default();
     let result = spin_on(compiler.build_from_source(source, req.ui_path.clone()));
 
-    let has_errors = result.diagnostics().any(|d| d.level() == slint_interpreter::DiagnosticLevel::Error);
+    let has_errors = result
+        .diagnostics()
+        .any(|d| d.level() == slint_interpreter::DiagnosticLevel::Error);
     for diag in result.diagnostics() {
         if diag.level() == slint_interpreter::DiagnosticLevel::Error {
             error!("Slint compile error: {diag}");
@@ -90,7 +77,8 @@ fn open_plugin_window(
         )
     })?;
 
-    let instance = definition.create()
+    let instance = definition
+        .create()
         .map_err(|e| anyhow::anyhow!("Failed to create plugin component: {e}"))?;
 
     // Wire all user-defined callbacks in the .slint to call through the
@@ -98,15 +86,22 @@ fn open_plugin_window(
     let on_ui_cb = vtable.on_ui_callback;
     for name in definition.callbacks() {
         let cb_name = name.clone();
-        if instance.set_callback(&name, move |_args| {
-            (on_ui_cb)(RString::from(cb_name.as_str()));
-            slint_interpreter::Value::Void
-        }).is_err() {
-            info!("Could not wire callback '{name}' for plugin '{}'", req.plugin_id);
+        if instance
+            .set_callback(&name, move |_args| {
+                (on_ui_cb)(RString::from(cb_name.as_str()));
+                slint_interpreter::Value::Void
+            })
+            .is_err()
+        {
+            info!(
+                "Could not wire callback '{name}' for plugin '{}'",
+                req.plugin_id
+            );
         }
     }
 
-    instance.show()
+    instance
+        .show()
         .map_err(|e| anyhow::anyhow!("Failed to show plugin window: {e}"))?;
 
     PLUGIN_WINDOWS.with(|windows| {
@@ -234,12 +229,15 @@ pub fn run_plugin_window_standalone(plugin_root: &Path) -> anyhow::Result<()> {
         (*sym)()
     };
 
-    let ui_path = manifest.resolve_entry_ui(plugin_root)
+    let ui_path = manifest
+        .resolve_entry_ui(plugin_root)
         .ok_or_else(|| anyhow::anyhow!("Plugin '{}' has no entry_ui", manifest.id))?;
     let req = WindowOpenRequest {
         plugin_id: manifest.id.clone(),
         ui_path,
-        component: manifest.entry_component.clone()
+        component: manifest
+            .entry_component
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("Plugin '{}' has no entry_component", manifest.id))?,
     };
 

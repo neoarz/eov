@@ -404,9 +404,7 @@ pub(crate) fn parse_launch_options() -> Result<LaunchOptions> {
                 })
             }
         },
-        Some(CliCommand::PluginWindow { plugin_dir }) => {
-            CommandAction::PluginWindow(plugin_dir)
-        }
+        Some(CliCommand::PluginWindow { plugin_dir }) => CommandAction::PluginWindow(plugin_dir),
         None => CommandAction::LaunchUi,
     };
 
@@ -462,10 +460,10 @@ pub(crate) fn resolve_plugin_dir(explicit: Option<&Path>) -> PathBuf {
 /// Expand a leading `~` to the user's home directory.
 fn expand_tilde(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
-    if s.starts_with("~/") || s == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(s.strip_prefix("~/").unwrap_or(""));
-        }
+    if (s.starts_with("~/") || s == "~")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(s.strip_prefix("~/").unwrap_or(""));
     }
     path.to_path_buf()
 }

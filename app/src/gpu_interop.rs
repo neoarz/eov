@@ -14,7 +14,18 @@ use ash::vk;
 use slint::wgpu_28::wgpu;
 use std::os::fd::RawFd;
 
+struct ImageLayoutTransition {
+    image: vk::Image,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+    src_access: vk::AccessFlags,
+    dst_access: vk::AccessFlags,
+    src_stage: vk::PipelineStageFlags,
+    dst_stage: vk::PipelineStageFlags,
+}
+
 /// Raw Vulkan handles extracted from the wgpu runtime.
+#[allow(dead_code)]
 pub(crate) struct VulkanHandles {
     /// `ash::Instance` dispatch table (not owned — lifetime tied to wgpu).
     pub instance_fn: ash::Instance,
@@ -36,6 +47,7 @@ pub(crate) struct VulkanHandles {
 }
 
 /// A VkImage backed by dedicated, DMA-BUF-exportable memory.
+#[allow(dead_code)]
 pub(crate) struct ExportableImage {
     pub image: vk::Image,
     pub memory: vk::DeviceMemory,
@@ -62,9 +74,7 @@ impl ExportableImage {
 /// # Safety
 /// The returned handles borrow the wgpu internals. The caller must ensure
 /// the wgpu Device outlives the returned `VulkanHandles`.
-pub(crate) unsafe fn extract_vulkan_handles(
-    wgpu_device: &wgpu::Device,
-) -> Option<VulkanHandles> {
+pub(crate) unsafe fn extract_vulkan_handles(wgpu_device: &wgpu::Device) -> Option<VulkanHandles> {
     // Access the wgpu-hal Vulkan device.
     let hal_device_guard = unsafe { wgpu_device.as_hal::<wgpu::hal::api::Vulkan>()? };
     let raw_device: ash::Device = hal_device_guard.raw_device().clone();
@@ -81,10 +91,8 @@ pub(crate) unsafe fn extract_vulkan_handles(
     let ash_instance_clone = ash_instance.clone();
 
     // Extension loaders for external memory/fence operations.
-    let external_memory_fd =
-        ash::khr::external_memory_fd::Device::new(ash_instance, &raw_device);
-    let external_fence_fd =
-        ash::khr::external_fence_fd::Device::new(ash_instance, &raw_device);
+    let external_memory_fd = ash::khr::external_memory_fd::Device::new(ash_instance, &raw_device);
+    let external_fence_fd = ash::khr::external_fence_fd::Device::new(ash_instance, &raw_device);
 
     // Create a command pool + buffer for filter copy operations.
     let pool_info = vk::CommandPoolCreateInfo::default()
@@ -120,6 +128,7 @@ pub(crate) unsafe fn extract_vulkan_handles(
 ///
 /// The image is created with `VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT`
 /// so its backing memory can be exported as a DMA-BUF file descriptor.
+#[allow(dead_code)]
 pub(crate) unsafe fn create_exportable_image(
     handles: &VulkanHandles,
     width: u32,
@@ -184,9 +193,7 @@ pub(crate) unsafe fn create_exportable_image(
     let memory = unsafe { handles.device_fn.allocate_memory(&alloc_info, None)? };
 
     unsafe {
-        handles
-            .device_fn
-            .bind_image_memory(image, memory, 0)?;
+        handles.device_fn.bind_image_memory(image, memory, 0)?;
     }
 
     // Query the stride (row pitch) for LINEAR tiling.
@@ -213,6 +220,7 @@ pub(crate) unsafe fn create_exportable_image(
 }
 
 /// Export a VkDeviceMemory as a DMA-BUF file descriptor.
+#[allow(dead_code)]
 pub(crate) unsafe fn export_dma_buf_fd(
     handles: &VulkanHandles,
     memory: vk::DeviceMemory,
@@ -225,6 +233,7 @@ pub(crate) unsafe fn export_dma_buf_fd(
 }
 
 /// Create a VkFence and export it as a sync file descriptor.
+#[allow(dead_code)]
 pub(crate) unsafe fn create_and_export_fence(
     handles: &VulkanHandles,
 ) -> Result<(vk::Fence, RawFd), vk::Result> {
@@ -241,6 +250,7 @@ pub(crate) unsafe fn create_and_export_fence(
 }
 
 /// Export a signaled fence as a sync fd.
+#[allow(dead_code)]
 pub(crate) unsafe fn export_fence_fd(
     handles: &VulkanHandles,
     fence: vk::Fence,
@@ -253,6 +263,7 @@ pub(crate) unsafe fn export_fence_fd(
 }
 
 /// Import a sync fd as a VkFence (for waiting on plugin completion).
+#[allow(dead_code)]
 pub(crate) unsafe fn import_fence_from_fd(
     handles: &VulkanHandles,
     fd: RawFd,
@@ -267,32 +278,24 @@ pub(crate) unsafe fn import_fence_from_fd(
         .fd(fd);
 
     unsafe {
-        handles
-            .external_fence_fd
-            .import_fence_fd(&import_info)?;
+        handles.external_fence_fd.import_fence_fd(&import_info)?;
     }
 
     Ok(fence)
 }
 
 /// Transition image layout using a pipeline barrier.
-pub(crate) unsafe fn transition_image_layout(
+unsafe fn transition_image_layout(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
-    image: vk::Image,
-    old_layout: vk::ImageLayout,
-    new_layout: vk::ImageLayout,
-    src_access: vk::AccessFlags,
-    dst_access: vk::AccessFlags,
-    src_stage: vk::PipelineStageFlags,
-    dst_stage: vk::PipelineStageFlags,
+    transition: ImageLayoutTransition,
 ) {
     let barrier = vk::ImageMemoryBarrier::default()
-        .old_layout(old_layout)
-        .new_layout(new_layout)
+        .old_layout(transition.old_layout)
+        .new_layout(transition.new_layout)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
+        .image(transition.image)
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
@@ -300,14 +303,14 @@ pub(crate) unsafe fn transition_image_layout(
             base_array_layer: 0,
             layer_count: 1,
         })
-        .src_access_mask(src_access)
-        .dst_access_mask(dst_access);
+        .src_access_mask(transition.src_access)
+        .dst_access_mask(transition.dst_access);
 
     unsafe {
         device.cmd_pipeline_barrier(
             cmd,
-            src_stage,
-            dst_stage,
+            transition.src_stage,
+            transition.dst_stage,
             vk::DependencyFlags::empty(),
             &[],
             &[],
@@ -351,6 +354,7 @@ fn find_memory_type_index(
 /// - `surface_vk_image` must be the raw VkImage backing the wgpu surface texture.
 /// - The wgpu device/queue must be idle (call `device.poll(Wait)` first).
 /// - `handles.command_buffer` must not be in a recording state.
+#[allow(dead_code)]
 pub(crate) unsafe fn copy_surface_to_filter(
     handles: &VulkanHandles,
     surface_vk_image: vk::Image,
@@ -371,26 +375,30 @@ pub(crate) unsafe fn copy_surface_to_filter(
         transition_image_layout(
             device,
             cmd,
-            surface_vk_image,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            vk::AccessFlags::SHADER_READ,
-            vk::AccessFlags::TRANSFER_READ,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::PipelineStageFlags::TRANSFER,
+            ImageLayoutTransition {
+                image: surface_vk_image,
+                old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                src_access: vk::AccessFlags::SHADER_READ,
+                dst_access: vk::AccessFlags::TRANSFER_READ,
+                src_stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                dst_stage: vk::PipelineStageFlags::TRANSFER,
+            },
         );
 
         // Transition filter image: UNDEFINED → TRANSFER_DST
         transition_image_layout(
             device,
             cmd,
-            filter_image.image,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::AccessFlags::empty(),
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::TRANSFER,
+            ImageLayoutTransition {
+                image: filter_image.image,
+                old_layout: vk::ImageLayout::UNDEFINED,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                src_access: vk::AccessFlags::empty(),
+                dst_access: vk::AccessFlags::TRANSFER_WRITE,
+                src_stage: vk::PipelineStageFlags::TOP_OF_PIPE,
+                dst_stage: vk::PipelineStageFlags::TRANSFER,
+            },
         );
 
         // Copy surface → filter
@@ -428,26 +436,30 @@ pub(crate) unsafe fn copy_surface_to_filter(
         transition_image_layout(
             device,
             cmd,
-            filter_image.image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::GENERAL,
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::ALL_COMMANDS,
+            ImageLayoutTransition {
+                image: filter_image.image,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::GENERAL,
+                src_access: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access: vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+                src_stage: vk::PipelineStageFlags::TRANSFER,
+                dst_stage: vk::PipelineStageFlags::ALL_COMMANDS,
+            },
         );
 
         // Transition surface back: TRANSFER_SRC → SHADER_READ_ONLY
         transition_image_layout(
             device,
             cmd,
-            surface_vk_image,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_READ,
-            vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            ImageLayoutTransition {
+                image: surface_vk_image,
+                old_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                src_access: vk::AccessFlags::TRANSFER_READ,
+                dst_access: vk::AccessFlags::SHADER_READ,
+                src_stage: vk::PipelineStageFlags::TRANSFER,
+                dst_stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            },
         );
 
         device.end_command_buffer(cmd)?;
@@ -469,6 +481,7 @@ pub(crate) unsafe fn copy_surface_to_filter(
 /// # Safety
 /// - The filter image must be in `GENERAL` layout.
 /// - The wgpu device/queue must be idle.
+#[allow(dead_code)]
 pub(crate) unsafe fn copy_filter_to_surface(
     handles: &VulkanHandles,
     filter_image: &ExportableImage,
@@ -489,26 +502,30 @@ pub(crate) unsafe fn copy_filter_to_surface(
         transition_image_layout(
             device,
             cmd,
-            filter_image.image,
-            vk::ImageLayout::GENERAL,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
-            vk::AccessFlags::TRANSFER_READ,
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            vk::PipelineStageFlags::TRANSFER,
+            ImageLayoutTransition {
+                image: filter_image.image,
+                old_layout: vk::ImageLayout::GENERAL,
+                new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                src_access: vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+                dst_access: vk::AccessFlags::TRANSFER_READ,
+                src_stage: vk::PipelineStageFlags::ALL_COMMANDS,
+                dst_stage: vk::PipelineStageFlags::TRANSFER,
+            },
         );
 
         // Transition surface: SHADER_READ_ONLY → TRANSFER_DST
         transition_image_layout(
             device,
             cmd,
-            surface_vk_image,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::AccessFlags::SHADER_READ,
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::PipelineStageFlags::TRANSFER,
+            ImageLayoutTransition {
+                image: surface_vk_image,
+                old_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                src_access: vk::AccessFlags::SHADER_READ,
+                dst_access: vk::AccessFlags::TRANSFER_WRITE,
+                src_stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                dst_stage: vk::PipelineStageFlags::TRANSFER,
+            },
         );
 
         // Copy filter → surface
@@ -546,13 +563,15 @@ pub(crate) unsafe fn copy_filter_to_surface(
         transition_image_layout(
             device,
             cmd,
-            surface_vk_image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::TRANSFER_WRITE,
-            vk::AccessFlags::SHADER_READ,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            ImageLayoutTransition {
+                image: surface_vk_image,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                src_access: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access: vk::AccessFlags::SHADER_READ,
+                src_stage: vk::PipelineStageFlags::TRANSFER,
+                dst_stage: vk::PipelineStageFlags::FRAGMENT_SHADER,
+            },
         );
 
         device.end_command_buffer(cmd)?;
@@ -572,6 +591,7 @@ pub(crate) unsafe fn copy_filter_to_surface(
 ///
 /// # Safety
 /// The wgpu Texture must be backed by a Vulkan image.
+#[allow(dead_code)]
 pub(crate) unsafe fn get_surface_vk_image(texture: &wgpu::Texture) -> Option<vk::Image> {
     let hal_texture = unsafe { texture.as_hal::<wgpu::hal::api::Vulkan>()? };
     Some(unsafe { hal_texture.raw_handle() })

@@ -67,26 +67,32 @@ impl Plugin for ExamplePlugin {
             },
             action_id: ACTION_OPEN_PANEL.into(),
         })?;
-        self.event_log
-            .lock()
-            .unwrap()
-            .record("plugin_activated");
+        self.event_log.lock().unwrap().record("plugin_activated");
         Ok(())
     }
 
-    fn on_action(&self, action_id: &str, host: &mut dyn HostContext, plugin_root: &Path) -> PluginResult<()> {
+    fn on_action(
+        &self,
+        action_id: &str,
+        host: &mut dyn HostContext,
+        plugin_root: &Path,
+    ) -> PluginResult<()> {
         if action_id == ACTION_OPEN_PANEL {
             self.event_log
                 .lock()
                 .unwrap()
                 .record("open_panel_requested");
             // Ask the host to open our plugin window
-            let ui_path = self.manifest.resolve_entry_ui(plugin_root)
+            let ui_path = self
+                .manifest
+                .resolve_entry_ui(plugin_root)
                 .expect("example plugin must have entry_ui");
             host.open_plugin_window(
                 &self.manifest.id,
                 &ui_path,
-                self.manifest.entry_component.as_deref()
+                self.manifest
+                    .entry_component
+                    .as_deref()
                     .expect("example plugin must have entry_component"),
             )?;
         }
@@ -182,4 +188,3 @@ mod tests {
         assert!(SMILEY_SVG.contains("</svg>"));
     }
 }
-

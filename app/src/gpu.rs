@@ -1,7 +1,6 @@
-use crate::gpu_interop::{ExportableImage, VulkanHandles};
 use crate::AppWindow;
+use crate::gpu_interop::{ExportableImage, VulkanHandles};
 use anyhow::Result;
-use ash::vk::Handle as VkHandle;
 use bytemuck::{Pod, Zeroable};
 use common::{FilteringMode, TileCoord, TileData};
 use slint::ComponentHandle;
@@ -853,198 +852,6 @@ impl GpuRenderer {
         }
     }
 
-    /// Get the raw Vulkan handles for GPU filter context construction.
-    /// Returns `None` if Vulkan interop was not initialized.
-    pub fn vulkan_handles(&self) -> Option<&VulkanHandles> {
-        self.runtime.as_ref()?.vulkan_handles.as_ref()
-    }
-
-    /// Ensure a DMA-BUF exportable filter image exists for the given slot
-    /// at the given dimensions and return the image info + DMA-BUF fd.
-    ///
-    /// The filter image is lazily created and re-created when dimensions change.
-    pub fn ensure_filter_image(
-        &mut self,
-        slot: SurfaceSlot,
-        width: u32,
-        height: u32,
-    ) -> Option<&ExportableImage> {
-        let runtime = self.runtime.as_mut()?;
-        let handles = runtime.vulkan_handles.as_ref()?;
-        let key = slot.index();
-
-        let needs_recreate = runtime
-            .filter_images
-            .get(&key)
-            .is_none_or(|img| img.width != width || img.height != height);
-
-        if needs_recreate {
-            // Destroy old image if it exists.
-            if let Some(old) = runtime.filter_images.remove(&key) {
-                unsafe { old.destroy(&handles.device_fn) };
-            }
-            match unsafe { crate::gpu_interop::create_exportable_image(handles, width, height) } {
-                Ok(img) => {
-                    runtime.filter_images.insert(key, img);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create exportable filter image: {:?}", e);
-                    return None;
-                }
-            }
-        }
-
-        runtime.filter_images.get(&key)
-    }
-
-    /// Export a DMA-BUF fd for a filter image at the given slot.
-    pub fn export_filter_dma_buf_fd(&self, slot: SurfaceSlot) -> Option<std::os::fd::RawFd> {
-        let runtime = self.runtime.as_ref()?;
-        let handles = runtime.vulkan_handles.as_ref()?;
-        let img = runtime.filter_images.get(&slot.index())?;
-        unsafe { crate::gpu_interop::export_dma_buf_fd(handles, img.memory).ok() }
-    }
-
-    /// Apply GPU filters to a rendered surface using FFI plugin vtables.
-    ///
-    /// This copies the surface to the exportable filter image, calls each
-    /// plugin's `apply_filter_gpu` FFI function, then copies the result back.
-    ///
-    /// `filter_fns` is a list of (filter_id, apply_fn) pairs from loaded FFI plugins.
-    pub fn apply_gpu_filters_ffi(
-        &mut self,
-        slot: SurfaceSlot,
-        filter_fns: &[(
-            &str,
-            extern "C" fn(
-                abi_stable::std_types::RString,
-                *const plugin_api::ffi::GpuFilterContextFFI,
-            ) -> bool,
-        )],
-    ) -> bool {
-        if filter_fns.is_empty() {
-            return false;
-        }
-
-        let runtime = match self.runtime.as_mut() {
-            Some(r) => r,
-            None => return false,
-        };
-
-        let handles = match &runtime.vulkan_handles {
-            Some(h) => h,
-            None => return false,
-        };
-
-        let surface = match runtime.surfaces.get(&slot.index()) {
-            Some(s) => s,
-            None => return false,
-        };
-
-        let (sw, sh) = (surface.width, surface.height);
-
-        // Ensure filter image exists at the right size.
-        let key = slot.index();
-        let needs_recreate = runtime
-            .filter_images
-            .get(&key)
-            .is_none_or(|img| img.width != sw || img.height != sh);
-
-        if needs_recreate {
-            if let Some(old) = runtime.filter_images.remove(&key) {
-                unsafe { old.destroy(&handles.device_fn) };
-            }
-            match unsafe { crate::gpu_interop::create_exportable_image(handles, sw, sh) } {
-                Ok(img) => {
-                    runtime.filter_images.insert(key, img);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create exportable filter image: {:?}", e);
-                    return false;
-                }
-            }
-        }
-
-        // Flush all wgpu work before using raw Vulkan commands.
-        let _ = runtime.device.poll(wgpu::PollType::wait_indefinitely());
-
-        // Get raw VkImage from the wgpu surface texture.
-        let surface_vk_image =
-            match unsafe { crate::gpu_interop::get_surface_vk_image(&surface.texture) } {
-                Some(img) => img,
-                None => return false,
-            };
-
-        let filter_image = runtime.filter_images.get(&key).unwrap();
-
-        // Copy surface → filter image
-        if let Err(e) = unsafe {
-            crate::gpu_interop::copy_surface_to_filter(handles, surface_vk_image, filter_image)
-        } {
-            tracing::error!("copy_surface_to_filter failed: {:?}", e);
-            return false;
-        }
-
-        // Build the GPU filter context for FFI plugins.
-        let done_fence = unsafe {
-            handles
-                .device_fn
-                .create_fence(&ash::vk::FenceCreateInfo::default(), None)
-        };
-        let done_fence = match done_fence {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!("Failed to create done fence: {:?}", e);
-                return false;
-            }
-        };
-
-        let ctx = plugin_api::ffi::GpuFilterContextFFI {
-            vk_device: handles.device_fn.handle().as_raw(),
-            vk_physical_device: handles.physical_device.as_raw(),
-            vk_queue: handles.queue.as_raw(),
-            queue_family_index: handles.queue_family_index,
-            vk_image: filter_image.image.as_raw(),
-            width: filter_image.width,
-            height: filter_image.height,
-            vk_format: filter_image.format.as_raw() as u32,
-            vk_done_fence: done_fence.as_raw(),
-        };
-
-        // Call each plugin's GPU filter function.
-        let mut any_applied = false;
-        for (filter_id, apply_fn) in filter_fns {
-            let id = abi_stable::std_types::RString::from(*filter_id);
-            if apply_fn(id, &ctx as *const _) {
-                // Wait for the plugin to signal the done fence.
-                unsafe {
-                    let _ = handles
-                        .device_fn
-                        .wait_for_fences(&[done_fence], true, u64::MAX);
-                    let _ = handles.device_fn.reset_fences(&[done_fence]);
-                }
-                any_applied = true;
-            }
-        }
-
-        // Clean up the done fence.
-        unsafe { handles.device_fn.destroy_fence(done_fence, None) };
-
-        if !any_applied {
-            return false;
-        }
-
-        // Copy filter image → surface
-        if let Err(e) = unsafe {
-            crate::gpu_interop::copy_filter_to_surface(handles, filter_image, surface_vk_image)
-        } {
-            tracing::error!("copy_filter_to_surface failed: {:?}", e);
-            return false;
-        }
-
-        true
-    }
-
     pub fn install(ui: &AppWindow, renderer: Rc<RefCell<Self>>) -> Result<()> {
         ui.window()
             .set_rendering_notifier(move |state, graphics_api| {
@@ -1381,11 +1188,11 @@ impl GpuRenderer {
     }
 
     fn teardown(&mut self) {
-        if let Some(runtime) = &self.runtime {
-            if let Some(handles) = &runtime.vulkan_handles {
-                for (_, img) in &runtime.filter_images {
-                    unsafe { img.destroy(&handles.device_fn) };
-                }
+        if let Some(runtime) = &self.runtime
+            && let Some(handles) = &runtime.vulkan_handles
+        {
+            for img in runtime.filter_images.values() {
+                unsafe { img.destroy(&handles.device_fn) };
             }
         }
         self.runtime = None;
@@ -1800,8 +1607,7 @@ impl GpuRenderer {
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::COPY_SRC,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 });
                 let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1826,31 +1632,26 @@ impl GpuRenderer {
             );
 
             // Bind group: surface texture as input.
-            let bind_group =
-                runtime
-                    .device
-                    .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("post-process-bind-group"),
-                        layout: &runtime.post_process_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&surface_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(
-                                    &runtime.post_process_sampler,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: runtime
-                                    .post_process_uniforms_buffer
-                                    .as_entire_binding(),
-                            },
-                        ],
-                    });
+            let bind_group = runtime
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("post-process-bind-group"),
+                    layout: &runtime.post_process_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&surface_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&runtime.post_process_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: runtime.post_process_uniforms_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
 
             let mut pp_encoder =
                 runtime

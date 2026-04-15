@@ -232,7 +232,10 @@ fn main() -> Result<()> {
                 for f in filters.iter() {
                     let wrapper = crate::viewport_filter::FfiViewportFilter::new(*vtable, f);
                     chain.register(f.filter_id.to_string(), Box::new(wrapper));
-                    info!("Registered viewport filter '{}' from plugin '{}'", f.filter_id, _plugin_id);
+                    info!(
+                        "Registered viewport filter '{}' from plugin '{}'",
+                        f.filter_id, _plugin_id
+                    );
                 }
             }
         }
@@ -388,7 +391,10 @@ fn setup_callbacks(
             Ok(plugins::ActionOutcome::RustPluginWindow { plugin_root }) => {
                 crate::plugins::spawn_rust_plugin_window(&plugin_root);
             }
-            Ok(plugins::ActionOutcome::PythonSpawn { script_path, plugin_root }) => {
+            Ok(plugins::ActionOutcome::PythonSpawn {
+                script_path,
+                plugin_root,
+            }) => {
                 // If the Python plugin has been spawned before (and presumably
                 // registered remote filters), toggle those filters on/off rather
                 // than spawning a second instance.
@@ -399,7 +405,12 @@ fn setup_callbacks(
                     drop(ehs);
                     drop(s);
                     // Request a re-render so the viewport reflects the toggled filter.
-                    request_render_loop(&rerender_timer, &rerender_ui, &rerender_state, &rerender_cache);
+                    request_render_loop(
+                        &rerender_timer,
+                        &rerender_ui,
+                        &rerender_state,
+                        &rerender_cache,
+                    );
                 } else {
                     pm.spawned_python_plugins.insert(plugin_id.clone());
                     crate::plugins::spawn_python_plugin(&script_path, &plugin_root);
@@ -411,7 +422,12 @@ fn setup_callbacks(
                 pm.sync_filter_states(&s.filter_chain);
                 drop(s);
                 // Request a re-render so the viewport reflects the toggled filter.
-                request_render_loop(&rerender_timer, &rerender_ui, &rerender_state, &rerender_cache);
+                request_render_loop(
+                    &rerender_timer,
+                    &rerender_ui,
+                    &rerender_state,
+                    &rerender_cache,
+                );
             }
             Err(e) => {
                 tracing::error!("Plugin action error: {e}");

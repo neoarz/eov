@@ -32,11 +32,6 @@ impl<'a> AppHostContext<'a> {
             window_requests: Vec::new(),
         }
     }
-
-    /// Drain and return any pending window-open requests.
-    pub fn take_window_requests(&mut self) -> Vec<WindowOpenRequest> {
-        std::mem::take(&mut self.window_requests)
-    }
 }
 
 impl HostContext for AppHostContext<'_> {

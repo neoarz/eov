@@ -13,7 +13,7 @@
 //!    host binary and registered via `PluginRegistry`.
 
 use crate::plugins::discovery;
-use crate::plugins::host_context::{AppHostContext, WindowOpenRequest};
+use crate::plugins::host_context::AppHostContext;
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::toolbar::ToolbarManager;
 use abi_stable::library::RawLibrary;
@@ -28,9 +28,7 @@ use tracing::{info, warn};
 /// Outcome of handling a toolbar button action.
 pub enum ActionOutcome {
     /// Rust plugin: spawn `eov plugin-window <root>` as a subprocess.
-    RustPluginWindow {
-        plugin_root: PathBuf,
-    },
+    RustPluginWindow { plugin_root: PathBuf },
     /// Python plugin: spawn the entry script as a subprocess.
     PythonSpawn {
         script_path: PathBuf,
@@ -87,7 +85,7 @@ impl PluginManager {
         for desc in &descriptors {
             // Handle Python plugins
             if desc.manifest.language == PluginLanguage::Python {
-                self.activate_python_plugin(&desc);
+                self.activate_python_plugin(desc);
                 continue;
             }
 
@@ -195,14 +193,14 @@ impl PluginManager {
     ) -> PluginResult<ActionOutcome> {
         // Python plugins – spawn the entry script as a subprocess.
         if self.python_plugins.contains(plugin_id) {
-            if let Some(desc) = self.descriptor(plugin_id) {
-                if let Some(script) = &desc.manifest.entry_script {
-                    let script_path = desc.root.join(script);
-                    return Ok(ActionOutcome::PythonSpawn {
-                        script_path,
-                        plugin_root: desc.root.clone(),
-                    });
-                }
+            if let Some(desc) = self.descriptor(plugin_id)
+                && let Some(script) = &desc.manifest.entry_script
+            {
+                let script_path = desc.root.join(script);
+                return Ok(ActionOutcome::PythonSpawn {
+                    script_path,
+                    plugin_root: desc.root.clone(),
+                });
             }
             return Err(plugin_api::PluginError::Other(format!(
                 "Python plugin '{plugin_id}' has no entry_script"
@@ -213,12 +211,12 @@ impl PluginManager {
         if let Some(vtable) = self.loaded_vtables.get(plugin_id) {
             let vt = *vtable; // Copy – PluginVTable is Copy
             let response = (vt.on_action)(RString::from(action_id));
-            if response.open_window {
-                if let Some(desc) = self.descriptor(plugin_id) {
-                    return Ok(ActionOutcome::RustPluginWindow {
-                        plugin_root: desc.root.clone(),
-                    });
-                }
+            if response.open_window
+                && let Some(desc) = self.descriptor(plugin_id)
+            {
+                return Ok(ActionOutcome::RustPluginWindow {
+                    plugin_root: desc.root.clone(),
+                });
             }
             return Ok(ActionOutcome::Handled);
         }
@@ -227,9 +225,7 @@ impl PluginManager {
         let plugin = self
             .registry
             .get(plugin_id)
-            .ok_or_else(|| {
-                plugin_api::PluginError::Other(format!("unknown plugin '{plugin_id}'"))
-            })?
+            .ok_or_else(|| plugin_api::PluginError::Other(format!("unknown plugin '{plugin_id}'")))?
             .clone();
 
         let plugin_root = self
@@ -294,11 +290,6 @@ impl PluginManager {
         self.descriptors.iter().find(|d| d.manifest.id == id)
     }
 
-    /// Get the plugin directory.
-    pub fn plugin_dir(&self) -> &Path {
-        &self.plugin_dir
-    }
-
     /// Returns an iterator over all dynamically loaded plugin vtables.
     /// Used to register FFI viewport filters into the filter chain.
     pub fn loaded_vtables(&self) -> impl Iterator<Item = (&str, &PluginVTable)> {
@@ -309,7 +300,7 @@ impl PluginManager {
     /// sync them into the shared filter chain.
     pub fn sync_filter_states(&self, filter_chain: &crate::viewport_filter::SharedFilterChain) {
         let mut chain = filter_chain.write();
-        for (_plugin_id, vtable) in &self.loaded_vtables {
+        for vtable in self.loaded_vtables.values() {
             let filters = (vtable.get_viewport_filters)();
             for f in filters.iter() {
                 chain.set_enabled(&f.filter_id, f.enabled);

@@ -35,13 +35,6 @@ impl ViewportFilterChain {
         self.filters.push(FilterEntry { id, filter });
     }
 
-    /// Remove a filter by id.
-    pub fn unregister(&mut self, id: &str) -> bool {
-        let len_before = self.filters.len();
-        self.filters.retain(|f| f.id != id);
-        self.filters.len() < len_before
-    }
-
     /// Toggle a filter on or off by id.
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> bool {
         if let Some(entry) = self.filters.iter_mut().find(|f| f.id == id) {
@@ -147,7 +140,7 @@ impl ViewportFilter for FfiViewportFilter {
     }
 
     fn apply_cpu(&self, frame: &mut CpuFrameBuffer<'_>) {
-        let len = (frame.width * frame.height * 4) as u32;
+        let len = frame.width * frame.height * 4;
         (self.vtable.apply_filter_cpu)(
             RString::from(&*self.filter_id),
             frame.data.as_mut_ptr(),
