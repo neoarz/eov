@@ -318,18 +318,13 @@ fn setup_callbacks(
 
         let mut pm = pm.borrow_mut();
         match pm.handle_action(&plugin_id, &action_id) {
-            Ok((window_requests, vtable)) => {
-                for req in window_requests {
-                    if let Some(vt) = vtable {
-                        crate::plugins::schedule_open_plugin_window(req, vt);
-                    } else {
-                        tracing::warn!(
-                            "Window requested for plugin '{}' but no vtable available",
-                            plugin_id
-                        );
-                    }
-                }
+            Ok(plugins::ActionOutcome::RustPluginWindow { plugin_root }) => {
+                crate::plugins::spawn_rust_plugin_window(&plugin_root);
             }
+            Ok(plugins::ActionOutcome::PythonSpawn { script_path, plugin_root }) => {
+                crate::plugins::spawn_python_plugin(&script_path, &plugin_root);
+            }
+            Ok(plugins::ActionOutcome::Handled) => {}
             Err(e) => {
                 tracing::error!("Plugin action error: {e}");
             }

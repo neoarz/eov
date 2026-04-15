@@ -17,16 +17,18 @@ pub(crate) mod registry;
 pub mod toolbar;
 
 pub use host_context::AppHostContext;
-pub use manager::PluginManager;
+pub use manager::{ActionOutcome, PluginManager};
 pub use toolbar::ToolbarManager;
 
+use abi_stable::library::RawLibrary;
 use abi_stable::std_types::RString;
 use host_context::WindowOpenRequest;
-use plugin_api::ffi::PluginVTable;
+use plugin_api::ffi::{self, PluginVTable};
 use slint::{ComponentHandle, Timer};
 use std::cell::RefCell;
+use std::path::Path;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // Thread-local storage for plugin window handles so they are not dropped.
 thread_local! {
@@ -112,6 +114,128 @@ fn open_plugin_window(
     });
 
     info!("Plugin window opened for '{}'", req.plugin_id);
+    Ok(())
+}
+
+/// Spawn a Python plugin's entry script as a subprocess.
+///
+/// The script is expected to use `slint`-python to create its own window
+/// and handle callbacks. The process runs independently of the host.
+///
+/// The plugin is expected to have a `.venv/` directory inside its root
+/// with the slint package installed. The host uses the venv's python3.
+pub fn spawn_python_plugin(script_path: &Path, plugin_root: &Path) {
+    info!(
+        "Spawning Python plugin: {} (cwd: {})",
+        script_path.display(),
+        plugin_root.display()
+    );
+
+    // Use the venv python inside the plugin directory.
+    let venv_python = plugin_root.join(".venv").join("bin").join("python3");
+    let python = if venv_python.exists() {
+        info!("Using plugin venv: {}", venv_python.display());
+        venv_python.into_os_string()
+    } else {
+        warn!(
+            "No .venv found in {}, falling back to system python3",
+            plugin_root.display()
+        );
+        std::ffi::OsString::from("python3")
+    };
+
+    match std::process::Command::new(&python)
+        .arg(script_path)
+        .current_dir(plugin_root)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            info!("Python plugin process started (pid {})", child.id());
+        }
+        Err(e) => {
+            error!(
+                "Failed to spawn Python plugin {}: {e}",
+                script_path.display()
+            );
+        }
+    }
+}
+
+/// Spawn the Rust plugin window in a child process.
+///
+/// Instead of opening a second Slint window in the same process (which
+/// crashes the wgpu renderer), we re-exec `eov plugin-window <dir>`.
+/// The child process gets its own GPU context and Slint event loop.
+pub fn spawn_rust_plugin_window(plugin_root: &Path) {
+    let eov_exe = std::env::current_exe().unwrap_or_else(|_| "eov".into());
+    info!(
+        "Spawning Rust plugin window subprocess: {} plugin-window {}",
+        eov_exe.display(),
+        plugin_root.display()
+    );
+
+    match std::process::Command::new(&eov_exe)
+        .arg("plugin-window")
+        .arg(plugin_root)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            info!("Rust plugin window process started (pid {})", child.id());
+        }
+        Err(e) => {
+            error!(
+                "Failed to spawn plugin window process for {}: {e}",
+                plugin_root.display()
+            );
+        }
+    }
+}
+
+/// Entry point for `eov plugin-window <plugin_root>`.
+///
+/// Runs in a child process with its own Slint event loop and GPU context.
+/// Loads the plugin manifest, shared library, and .slint UI; wires callbacks
+/// through the vtable; shows the window; and blocks until it is closed.
+pub fn run_plugin_window_standalone(plugin_root: &Path) -> anyhow::Result<()> {
+    let manifest = plugin_api::PluginManifest::from_file(
+        &plugin_root.join(plugin_api::manifest::MANIFEST_FILENAME),
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to load plugin manifest: {e}"))?;
+
+    let lib_name = ffi::plugin_library_filename(&manifest.id);
+    let lib_path = plugin_root.join(&lib_name);
+    if !lib_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Plugin shared library not found: {}",
+            lib_path.display()
+        ));
+    }
+
+    // Load the shared library and get the vtable.
+    let raw = RawLibrary::load_at(&lib_path)
+        .map_err(|e| anyhow::anyhow!("Failed to load plugin library: {e}"))?;
+    let raw: &'static RawLibrary = Box::leak(Box::new(raw));
+    let vtable: PluginVTable = unsafe {
+        let sym = raw
+            .get::<ffi::GetPluginVTableFn>(ffi::PLUGIN_VTABLE_SYMBOL)
+            .map_err(|e| anyhow::anyhow!("Failed to find plugin vtable symbol: {e}"))?;
+        (*sym)()
+    };
+
+    let ui_path = manifest.resolve_entry_ui(plugin_root);
+    let req = WindowOpenRequest {
+        plugin_id: manifest.id.clone(),
+        ui_path,
+        component: manifest.entry_component.clone(),
+    };
+
+    // Open the window directly (no deferral needed — we own the event loop).
+    open_plugin_window(&req, &vtable)?;
+
+    // Run until the window is closed.
+    slint::run_event_loop()?;
     Ok(())
 }
 

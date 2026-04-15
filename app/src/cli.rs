@@ -177,6 +177,16 @@ enum CliCommand {
         #[command(subcommand)]
         command: DatasetCommand,
     },
+    /// Open a plugin's .slint window in a standalone process.
+    ///
+    /// This is an internal subcommand spawned by the host when a Rust plugin
+    /// requests a window. It runs its own Slint event loop so the plugin
+    /// window doesn't conflict with the main window's wgpu renderer.
+    #[command(hide = true)]
+    PluginWindow {
+        /// Path to the plugin's root directory (contains plugin.toml).
+        plugin_dir: PathBuf,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -274,6 +284,7 @@ enum CommandAction {
     RecentList,
     ConfigPath,
     DatasetPatches(DatasetPatchesConfig),
+    PluginWindow(PathBuf),
 }
 
 pub(crate) struct PaneSpec {
@@ -386,6 +397,9 @@ pub(crate) fn parse_launch_options() -> Result<LaunchOptions> {
                 })
             }
         },
+        Some(CliCommand::PluginWindow { plugin_dir }) => {
+            CommandAction::PluginWindow(plugin_dir)
+        }
         None => CommandAction::LaunchUi,
     };
 
@@ -473,6 +487,10 @@ pub(crate) fn maybe_run_cli_command(launch_options: &LaunchOptions) -> Result<bo
         }
         CommandAction::DatasetPatches(config) => {
             run_dataset_patches_cli(config)?;
+            Ok(true)
+        }
+        CommandAction::PluginWindow(plugin_root) => {
+            crate::plugins::run_plugin_window_standalone(plugin_root)?;
             Ok(true)
         }
     }

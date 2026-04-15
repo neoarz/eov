@@ -30,6 +30,7 @@ pub mod ffi;
 pub mod manifest;
 
 pub use manifest::PluginManifest;
+pub use manifest::{ManifestToolbarButton, PluginLanguage};
 
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -206,6 +207,9 @@ mod tests {
                 entry_ui: "ui/panel.slint".into(),
                 entry_component: "Panel".into(),
                 icon: None,
+                language: Default::default(),
+                entry_script: None,
+                toolbar_buttons: Vec::new(),
             },
         };
         assert_eq!(

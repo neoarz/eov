@@ -45,6 +45,9 @@ impl ExamplePlugin {
             icon: Some(IconDescriptor::Svg {
                 data: SMILEY_SVG.into(),
             }),
+            language: Default::default(),
+            entry_script: None,
+            toolbar_buttons: Vec::new(),
         }
     }
 }
