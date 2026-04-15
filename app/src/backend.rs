@@ -12,13 +12,25 @@ pub(crate) struct WindowGeometry {
 
 pub(crate) fn select_backend(window_geometry: WindowGeometry) -> Result<()> {
     let mut settings = slint::wgpu_28::WGPUSettings::default();
-    settings.backends = wgpu::Backends::VULKAN;
+    settings.backends = preferred_backends();
 
     winit_backend_selector(window_geometry)
         .renderer_name("femtovg-wgpu".to_string())
         .require_wgpu_28(slint::wgpu_28::WGPUConfiguration::Automatic(settings))
         .select()?;
     Ok(())
+}
+
+fn preferred_backends() -> wgpu::Backends {
+    #[cfg(target_os = "macos")]
+    {
+        wgpu::Backends::METAL
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        wgpu::Backends::VULKAN
+    }
 }
 
 fn winit_backend_selector(window_geometry: WindowGeometry) -> BackendSelector {

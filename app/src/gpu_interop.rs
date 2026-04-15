@@ -75,6 +75,14 @@ impl ExportableImage {
 /// The returned handles borrow the wgpu internals. The caller must ensure
 /// the wgpu Device outlives the returned `VulkanHandles`.
 pub(crate) unsafe fn extract_vulkan_handles(wgpu_device: &wgpu::Device) -> Option<VulkanHandles> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = wgpu_device;
+        return None;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
     // Access the wgpu-hal Vulkan device.
     let hal_device_guard = unsafe { wgpu_device.as_hal::<wgpu::hal::api::Vulkan>()? };
     let raw_device: ash::Device = hal_device_guard.raw_device().clone();
@@ -122,6 +130,7 @@ pub(crate) unsafe fn extract_vulkan_handles(wgpu_device: &wgpu::Device) -> Optio
         command_buffer,
         copy_fence,
     })
+    }
 }
 
 /// Create a VkImage with dedicated, DMA-BUF-exportable memory.
@@ -593,6 +602,15 @@ pub(crate) unsafe fn copy_filter_to_surface(
 /// The wgpu Texture must be backed by a Vulkan image.
 #[allow(dead_code)]
 pub(crate) unsafe fn get_surface_vk_image(texture: &wgpu::Texture) -> Option<vk::Image> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = texture;
+        return None;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
     let hal_texture = unsafe { texture.as_hal::<wgpu::hal::api::Vulkan>()? };
     Some(unsafe { hal_texture.raw_handle() })
+    }
 }
