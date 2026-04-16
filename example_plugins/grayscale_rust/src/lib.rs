@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const SMILEY_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>"#;
 
 const FILTER_ID: &str = "grayscale";
+const BUTTON_ID: &str = "toggle_grayscale";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static HOST_API: Mutex<Option<HostApiVTable>> = Mutex::new(None);
@@ -36,10 +37,10 @@ extern "C" fn set_host_api_ffi(host_api: HostApiVTable) {
 
 extern "C" fn get_toolbar_buttons_ffi() -> RVec<ToolbarButtonFFI> {
     RVec::from(vec![ToolbarButtonFFI {
-        button_id: RString::from("toggle_grayscale"),
+        button_id: RString::from(BUTTON_ID),
         tooltip: RString::from("Toggle Grayscale"),
         icon_svg: RString::from(SMILEY_SVG),
-        action_id: RString::from("toggle_grayscale"),
+        action_id: RString::from(BUTTON_ID),
     }])
 }
 
@@ -48,9 +49,15 @@ extern "C" fn get_hud_toolbar_buttons_ffi() -> RVec<HudToolbarButtonFFI> {
 }
 
 extern "C" fn on_action_ffi(action_id: RString) -> ActionResponseFFI {
-    if action_id.as_str() == "toggle_grayscale" {
+    if action_id.as_str() == BUTTON_ID {
         let prev = ENABLED.fetch_xor(true, Ordering::Relaxed);
         if let Some(host_api) = *HOST_API.lock().unwrap() {
+            let enabled = !prev;
+            let _ = (host_api.set_toolbar_button_active)(
+                host_api.context,
+                RString::from(BUTTON_ID),
+                enabled,
+            );
             let message = if !prev {
                 "Grayscale filter enabled"
             } else {

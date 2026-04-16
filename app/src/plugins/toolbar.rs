@@ -76,6 +76,7 @@ mod tests {
                 data: "<svg/>".into(),
             },
             action_id: format!("{plugin_id}.{button_id}.action"),
+            active: false,
         }
     }
 
@@ -127,6 +128,7 @@ mod tests {
                 data: "<svg>icon</svg>".into(),
             },
             action_id: "open_panel".into(),
+            active: false,
         };
         mgr.register(btn).unwrap();
 

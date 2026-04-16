@@ -9,7 +9,7 @@ use plugin_api::ffi::{
 };
 use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, Timer, VecModel};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -76,72 +76,80 @@ pub(crate) fn build_host_api(plugin_id: &str, state: &Arc<RwLock<AppState>>) -> 
         set_active_viewport: ffi_set_active_viewport,
         fit_active_viewport: ffi_fit_active_viewport,
         frame_active_rect: ffi_frame_active_rect,
+        set_toolbar_button_active: ffi_set_toolbar_button_active,
+        set_hud_toolbar_button_active: ffi_set_hud_toolbar_button_active,
         log_message: ffi_log_message,
     }
 }
 
 pub(crate) fn refresh_plugin_buttons() -> Result<(), String> {
+    run_on_ui_thread(refresh_plugin_buttons_in_ui)
+}
+
+pub(crate) fn set_local_toolbar_button_active(
+    plugin_id: &str,
+    button_id: &str,
+    active: bool,
+) -> Result<(), String> {
+    let plugin_id = plugin_id.to_string();
+    let button_id = button_id.to_string();
     run_on_ui_thread(move |runtime| {
-        let ui = runtime
-            .ui_weak
-            .upgrade()
-            .ok_or_else(|| "application window is no longer available".to_string())?;
-        let state = runtime.state.read();
-        let remote_buttons = {
-            let extension_state = state.extension_host_state.read();
-            (
-                extension_state.toolbar_buttons.clone(),
-                extension_state.hud_toolbar_buttons.clone(),
-            )
-        };
-        let buttons: Vec<crate::PluginButtonData> = state
-            .local_plugin_buttons
-            .iter()
-            .map(|button| crate::PluginButtonData {
-                plugin_id: button.plugin_id.clone().into(),
-                button_id: button.button_id.clone().into(),
-                tooltip: button.tooltip.clone().into(),
-                icon: image_from_icon_descriptor(&button.icon),
-                action_id: button.action_id.clone().into(),
-            })
-            .chain(
-                remote_buttons
-                    .0
-                    .into_iter()
-                    .map(|button| crate::PluginButtonData {
-                        plugin_id: button.plugin_id.into(),
-                        button_id: button.button_id.into(),
-                        tooltip: button.tooltip.into(),
-                        icon: image_from_svg(&button.icon_svg),
-                        action_id: button.action_id.into(),
-                    }),
-            )
-            .collect();
-        let hud_buttons: Vec<crate::HudToolbarButtonData> = state
-            .local_hud_plugin_buttons
-            .iter()
-            .map(|button| crate::HudToolbarButtonData {
-                plugin_id: button.plugin_id.clone().into(),
-                button_id: button.button_id.clone().into(),
-                tooltip: button.tooltip.clone().into(),
-                icon: image_from_icon_descriptor(&button.icon),
-                action_id: button.action_id.clone().into(),
-            })
-            .chain(
-                remote_buttons
-                    .1
-                    .into_iter()
-                    .map(|button| crate::HudToolbarButtonData {
-                        plugin_id: button.plugin_id.into(),
-                        button_id: button.button_id.into(),
-                        tooltip: button.tooltip.into(),
-                        icon: image_from_svg(&button.icon_svg),
-                        action_id: button.action_id.into(),
-                    }),
-            )
-            .collect();
-        ui.set_plugin_buttons(ModelRc::from(std::rc::Rc::new(VecModel::from(buttons))));
-        ui.set_plugin_hud_buttons(ModelRc::from(std::rc::Rc::new(VecModel::from(hud_buttons))));
+        {
+            let mut state = runtime.state.write();
+            let button = state
+                .local_plugin_buttons
+                .iter_mut()
+                .find(|button| button.plugin_id == plugin_id && button.button_id == button_id)
+                .ok_or_else(|| {
+                    format!(
+                        "local toolbar button '{}:{}' is not registered",
+                        plugin_id, button_id
+                    )
+                })?;
+            button.active = active;
+        }
+        refresh_plugin_buttons_in_ui(runtime)
+    })
+}
+
+pub(crate) fn set_local_hud_toolbar_button_active(
+    plugin_id: &str,
+    button_id: &str,
+    active: bool,
+) -> Result<(), String> {
+    let plugin_id = plugin_id.to_string();
+    let button_id = button_id.to_string();
+    run_on_ui_thread(move |runtime| {
+        {
+            let mut state = runtime.state.write();
+            let button = state
+                .local_hud_plugin_buttons
+                .iter_mut()
+                .find(|button| button.plugin_id == plugin_id && button.button_id == button_id)
+                .ok_or_else(|| {
+                    format!(
+                        "local HUD toolbar button '{}:{}' is not registered",
+                        plugin_id, button_id
+                    )
+                })?;
+            button.active = active;
+        }
+        refresh_plugin_buttons_in_ui(runtime)
+    })
+}
+
+pub(crate) fn request_filter_repaint() -> Result<(), String> {
+    run_on_ui_thread(move |runtime| {
+        {
+            let mut state = runtime.state.write();
+            state.bump_filter_revision();
+        }
+        request_render_loop(
+            &runtime.render_timer,
+            &runtime.ui_weak,
+            &runtime.state,
+            &runtime.tile_cache,
+        );
         Ok(())
     })
 }
@@ -390,6 +398,90 @@ fn image_from_icon_descriptor(icon: &IconDescriptor) -> Image {
     }
 }
 
+fn refresh_plugin_buttons_in_ui(runtime: &UiRuntime) -> Result<(), String> {
+    let ui = runtime
+        .ui_weak
+        .upgrade()
+        .ok_or_else(|| "application window is no longer available".to_string())?;
+    let state = runtime.state.read();
+    let remote_buttons = {
+        let extension_state = state.extension_host_state.read();
+        (
+            extension_state.toolbar_buttons.clone(),
+            extension_state.hud_toolbar_buttons.clone(),
+        )
+    };
+    let remote_toolbar_keys: HashSet<(String, String)> = remote_buttons
+        .0
+        .iter()
+        .map(|button| (button.plugin_id.clone(), button.button_id.clone()))
+        .collect();
+    let remote_hud_toolbar_keys: HashSet<(String, String)> = remote_buttons
+        .1
+        .iter()
+        .map(|button| (button.plugin_id.clone(), button.button_id.clone()))
+        .collect();
+    let buttons: Vec<crate::PluginButtonData> = state
+        .local_plugin_buttons
+        .iter()
+        .filter(|button| {
+            !remote_toolbar_keys.contains(&(button.plugin_id.clone(), button.button_id.clone()))
+        })
+        .map(|button| crate::PluginButtonData {
+            plugin_id: button.plugin_id.clone().into(),
+            button_id: button.button_id.clone().into(),
+            tooltip: button.tooltip.clone().into(),
+            icon: image_from_icon_descriptor(&button.icon),
+            action_id: button.action_id.clone().into(),
+            active: button.active,
+        })
+        .chain(
+            remote_buttons
+                .0
+                .into_iter()
+                .map(|button| crate::PluginButtonData {
+                    plugin_id: button.plugin_id.into(),
+                    button_id: button.button_id.into(),
+                    tooltip: button.tooltip.into(),
+                    icon: image_from_svg(&button.icon_svg),
+                    action_id: button.action_id.into(),
+                    active: button.active,
+                }),
+        )
+        .collect();
+    let hud_buttons: Vec<crate::HudToolbarButtonData> = state
+        .local_hud_plugin_buttons
+        .iter()
+        .filter(|button| {
+            !remote_hud_toolbar_keys.contains(&(button.plugin_id.clone(), button.button_id.clone()))
+        })
+        .map(|button| crate::HudToolbarButtonData {
+            plugin_id: button.plugin_id.clone().into(),
+            button_id: button.button_id.clone().into(),
+            tooltip: button.tooltip.clone().into(),
+            icon: image_from_icon_descriptor(&button.icon),
+            action_id: button.action_id.clone().into(),
+            active: button.active,
+        })
+        .chain(
+            remote_buttons
+                .1
+                .into_iter()
+                .map(|button| crate::HudToolbarButtonData {
+                    plugin_id: button.plugin_id.into(),
+                    button_id: button.button_id.into(),
+                    tooltip: button.tooltip.into(),
+                    icon: image_from_svg(&button.icon_svg),
+                    action_id: button.action_id.into(),
+                    active: button.active,
+                }),
+        )
+        .collect();
+    ui.set_plugin_buttons(ModelRc::from(std::rc::Rc::new(VecModel::from(buttons))));
+    ui.set_plugin_hud_buttons(ModelRc::from(std::rc::Rc::new(VecModel::from(hud_buttons))));
+    Ok(())
+}
+
 fn image_from_svg(svg: &str) -> Image {
     if svg.trim().is_empty() {
         empty_image()
@@ -571,6 +663,34 @@ extern "C" fn ffi_frame_active_rect(
         return RResult::RErr(RString::from("invalid host API context"));
     }
     match frame_active_rect(x, y, width, height) {
+        Ok(()) => RResult::ROk(()),
+        Err(err) => RResult::RErr(RString::from(err)),
+    }
+}
+
+extern "C" fn ffi_set_toolbar_button_active(
+    context: u64,
+    button_id: RString,
+    active: bool,
+) -> RResult<(), RString> {
+    let Some(plugin_id) = context_plugin_id(context) else {
+        return RResult::RErr(RString::from("invalid host API context"));
+    };
+    match set_local_toolbar_button_active(&plugin_id, button_id.as_str(), active) {
+        Ok(()) => RResult::ROk(()),
+        Err(err) => RResult::RErr(RString::from(err)),
+    }
+}
+
+extern "C" fn ffi_set_hud_toolbar_button_active(
+    context: u64,
+    button_id: RString,
+    active: bool,
+) -> RResult<(), RString> {
+    let Some(plugin_id) = context_plugin_id(context) else {
+        return RResult::RErr(RString::from("invalid host API context"));
+    };
+    match set_local_hud_toolbar_button_active(&plugin_id, button_id.as_str(), active) {
         Ok(()) => RResult::ROk(()),
         Err(err) => RResult::RErr(RString::from(err)),
     }

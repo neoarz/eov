@@ -235,6 +235,7 @@ export component WindowToolbar inherits Rectangle {
                 width: 32px;
                 icon-source: btn.icon;
                 tooltip-text: btn.tooltip;
+                is-active: btn.active;
                 clicked => {
                     root.plugin-button-clicked(btn.plugin-id, btn.action-id);
                 }

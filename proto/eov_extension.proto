@@ -21,9 +21,11 @@ service ExtensionHost {
   rpc LogMessage(LogMessageRequest) returns (HostCommandResponse);
   rpc RegisterToolbarButton(RegisterToolbarButtonRequest) returns (HostCommandResponse);
   rpc UnregisterToolbarButton(UnregisterToolbarButtonRequest) returns (HostCommandResponse);
+  rpc SetToolbarButtonActive(SetToolbarButtonActiveRequest) returns (HostCommandResponse);
   rpc ToolbarActionStream(ToolbarActionStreamRequest) returns (stream ToolbarActionRequest);
   rpc RegisterHudToolbarButton(RegisterHudToolbarButtonRequest) returns (HostCommandResponse);
   rpc UnregisterHudToolbarButton(UnregisterHudToolbarButtonRequest) returns (HostCommandResponse);
+  rpc SetHudToolbarButtonActive(SetHudToolbarButtonActiveRequest) returns (HostCommandResponse);
   rpc HudToolbarActionStream(HudToolbarActionStreamRequest) returns (stream HudToolbarActionRequest);
 
   // Register a viewport filter. Returns a unique filter id.
@@ -183,6 +185,12 @@ message UnregisterToolbarButtonRequest {
   string button_id = 2;
 }
 
+message SetToolbarButtonActiveRequest {
+  string plugin_handle = 1;
+  string button_id = 2;
+  bool active = 3;
+}
+
 message ToolbarActionStreamRequest {
   string plugin_handle = 1;
 }
@@ -205,6 +213,12 @@ message RegisterHudToolbarButtonRequest {
 message UnregisterHudToolbarButtonRequest {
   string plugin_handle = 1;
   string button_id = 2;
+}
+
+message SetHudToolbarButtonActiveRequest {
+  string plugin_handle = 1;
+  string button_id = 2;
+  bool active = 3;
 }
 
 message HudToolbarActionStreamRequest {

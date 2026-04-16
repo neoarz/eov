@@ -176,6 +176,7 @@ mod tests {
                     data: "<svg/>".into(),
                 },
                 action_id: "a".into(),
+                active: false,
             })
             .unwrap();
 

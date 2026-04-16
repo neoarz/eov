@@ -13,9 +13,10 @@ use crate::eov_extension::{
     ReadRegionRequest, ReadRegionResponse, RegisterFilterRequest, RegisterFilterResponse,
     RegisterHudToolbarButtonRequest, RegisterPluginRequest, RegisterPluginResponse,
     RegisterToolbarButtonRequest, SetActiveViewportRequest, SetFilterEnabledRequest,
-    SetFilterEnabledResponse, ToolbarActionRequest, ToolbarActionStreamRequest,
-    UnregisterFilterRequest, UnregisterFilterResponse, UnregisterHudToolbarButtonRequest,
-    UnregisterPluginRequest, UnregisterToolbarButtonRequest, ViewportSnapshot,
+    SetFilterEnabledResponse, SetHudToolbarButtonActiveRequest, SetToolbarButtonActiveRequest,
+    ToolbarActionRequest, ToolbarActionStreamRequest, UnregisterFilterRequest,
+    UnregisterFilterResponse, UnregisterHudToolbarButtonRequest, UnregisterPluginRequest,
+    UnregisterToolbarButtonRequest, ViewportSnapshot,
 };
 use parking_lot::RwLock;
 use plugin_api::PluginError;
@@ -25,6 +26,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{info, warn};
+
+const MAX_GRPC_FILTER_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct RemotePlugin {
@@ -51,7 +54,7 @@ pub(crate) struct CpuFilterRequest {
     pub width: u32,
     pub height: u32,
     pub rgba_data: Vec<u8>,
-    pub response_tx: tokio::sync::oneshot::Sender<Vec<u8>>,
+    pub response_tx: std::sync::mpsc::Sender<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -62,6 +65,7 @@ pub(crate) struct RemoteToolbarButton {
     pub tooltip: String,
     pub icon_svg: String,
     pub action_id: String,
+    pub active: bool,
 }
 
 #[derive(Clone)]
@@ -72,6 +76,7 @@ pub(crate) struct RemoteHudToolbarButton {
     pub tooltip: String,
     pub icon_svg: String,
     pub action_id: String,
+    pub active: bool,
 }
 
 pub(crate) struct RemoteToolbarActionRequest {
@@ -208,6 +213,7 @@ impl ExtensionHostState {
             tooltip,
             icon_svg,
             action_id,
+            active: false,
         });
         Ok(plugin_id)
     }
@@ -240,7 +246,50 @@ impl ExtensionHostState {
             tooltip,
             icon_svg,
             action_id,
+            active: false,
         });
+        Ok(plugin_id)
+    }
+
+    pub fn set_toolbar_button_active(
+        &mut self,
+        plugin_handle: &str,
+        button_id: &str,
+        active: bool,
+    ) -> Result<String, String> {
+        let plugin_id = self
+            .plugin(plugin_handle)
+            .map(|plugin| plugin.plugin_id.clone())
+            .ok_or_else(|| format!("remote plugin handle '{plugin_handle}' is not registered"))?;
+        let button = self
+            .toolbar_buttons
+            .iter_mut()
+            .find(|button| button.plugin_handle == plugin_handle && button.button_id == button_id)
+            .ok_or_else(|| {
+                format!("remote toolbar button '{plugin_id}:{button_id}' is not registered")
+            })?;
+        button.active = active;
+        Ok(plugin_id)
+    }
+
+    pub fn set_hud_toolbar_button_active(
+        &mut self,
+        plugin_handle: &str,
+        button_id: &str,
+        active: bool,
+    ) -> Result<String, String> {
+        let plugin_id = self
+            .plugin(plugin_handle)
+            .map(|plugin| plugin.plugin_id.clone())
+            .ok_or_else(|| format!("remote plugin handle '{plugin_handle}' is not registered"))?;
+        let button = self
+            .hud_toolbar_buttons
+            .iter_mut()
+            .find(|button| button.plugin_handle == plugin_handle && button.button_id == button_id)
+            .ok_or_else(|| {
+                format!("remote HUD toolbar button '{plugin_id}:{button_id}' is not registered")
+            })?;
+        button.active = active;
         Ok(plugin_id)
     }
 
@@ -486,6 +535,25 @@ impl ExtensionHost for ExtensionHostService {
         Ok(Response::new(HostCommandResponse {}))
     }
 
+    async fn set_toolbar_button_active(
+        &self,
+        request: Request<SetToolbarButtonActiveRequest>,
+    ) -> Result<Response<HostCommandResponse>, Status> {
+        let req = request.into_inner();
+        let plugin_id = {
+            let mut state = self.state.write();
+            state
+                .set_toolbar_button_active(&req.plugin_handle, &req.button_id, req.active)
+                .map_err(Status::failed_precondition)?
+        };
+        crate::plugin_host::refresh_plugin_buttons().map_err(Status::failed_precondition)?;
+        info!(
+            "Updated remote toolbar button active state '{}:{}' -> {}",
+            plugin_id, req.button_id, req.active
+        );
+        Ok(Response::new(HostCommandResponse {}))
+    }
+
     async fn register_hud_toolbar_button(
         &self,
         request: Request<RegisterHudToolbarButtonRequest>,
@@ -529,6 +597,25 @@ impl ExtensionHost for ExtensionHostService {
                 plugin_id, req.button_id
             );
         }
+        Ok(Response::new(HostCommandResponse {}))
+    }
+
+    async fn set_hud_toolbar_button_active(
+        &self,
+        request: Request<SetHudToolbarButtonActiveRequest>,
+    ) -> Result<Response<HostCommandResponse>, Status> {
+        let req = request.into_inner();
+        let plugin_id = {
+            let mut state = self.state.write();
+            state
+                .set_hud_toolbar_button_active(&req.plugin_handle, &req.button_id, req.active)
+                .map_err(Status::failed_precondition)?
+        };
+        crate::plugin_host::refresh_plugin_buttons().map_err(Status::failed_precondition)?;
+        info!(
+            "Updated remote HUD toolbar button active state '{}:{}' -> {}",
+            plugin_id, req.button_id, req.active
+        );
         Ok(Response::new(HostCommandResponse {}))
     }
 
@@ -848,25 +935,28 @@ impl ExtensionHost for ExtensionHostService {
         request: Request<SetFilterEnabledRequest>,
     ) -> Result<Response<SetFilterEnabledResponse>, Status> {
         let req = request.into_inner();
-        let mut state = self.state.write();
-        if let Some(filter) = state.filters.get_mut(&req.filter_id) {
-            if filter.owner_handle != req.plugin_handle {
-                return Err(Status::permission_denied(format!(
-                    "filter '{}' is not owned by plugin handle '{}'",
-                    req.filter_id, req.plugin_handle
+        {
+            let mut state = self.state.write();
+            if let Some(filter) = state.filters.get_mut(&req.filter_id) {
+                if filter.owner_handle != req.plugin_handle {
+                    return Err(Status::permission_denied(format!(
+                        "filter '{}' is not owned by plugin handle '{}'",
+                        req.filter_id, req.plugin_handle
+                    )));
+                }
+                filter.enabled = req.enabled;
+                info!(
+                    "Filter '{}' ({}): enabled={}",
+                    filter.name, req.filter_id, req.enabled
+                );
+            } else {
+                return Err(Status::not_found(format!(
+                    "filter '{}' not found",
+                    req.filter_id
                 )));
             }
-            filter.enabled = req.enabled;
-            info!(
-                "Filter '{}' ({}): enabled={}",
-                filter.name, req.filter_id, req.enabled
-            );
-        } else {
-            return Err(Status::not_found(format!(
-                "filter '{}' not found",
-                req.filter_id
-            )));
         }
+        crate::plugin_host::request_filter_repaint().map_err(Status::failed_precondition)?;
         Ok(Response::new(SetFilterEnabledResponse {}))
     }
 
@@ -952,7 +1042,7 @@ impl ExtensionHost for ExtensionHostService {
         // Coordinator task: bridge render pipeline ↔ plugin.
         tokio::spawn(async move {
             while let Some(frame_req) = frame_rx.recv().await {
-                let oneshot_tx = frame_req.response_tx;
+                let response_tx = frame_req.response_tx;
 
                 // Push the raw frame to the plugin via the response stream.
                 let resp = ApplyFilterCpuResponse {
@@ -967,7 +1057,7 @@ impl ExtensionHost for ExtensionHostService {
                 // Wait for the plugin to return the processed frame.
                 match in_stream.message().await {
                     Ok(Some(processed)) => {
-                        let _ = oneshot_tx.send(processed.rgba_data);
+                        let _ = response_tx.send(processed.rgba_data);
                     }
                     Ok(None) => break,
                     Err(e) => {
@@ -1025,7 +1115,11 @@ pub(crate) async fn start_extension_host(
     info!("Starting extension host gRPC server on {addr}");
 
     tonic::transport::Server::builder()
-        .add_service(ExtensionHostServer::new(service))
+        .add_service(
+            ExtensionHostServer::new(service)
+                .max_decoding_message_size(MAX_GRPC_FILTER_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_GRPC_FILTER_MESSAGE_BYTES),
+        )
         .serve(addr)
         .await?;
 
@@ -1160,28 +1254,53 @@ pub(crate) fn apply_remote_cpu_filters(
     height: u32,
     _runtime: &tokio::runtime::Handle,
 ) {
-    let state = state.read();
-    for (filter_id, filter) in &state.filters {
-        if !filter.enabled || !filter.supports_cpu {
-            continue;
-        }
-        if let Some(tx) = &filter.cpu_request_tx {
-            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-            let req = CpuFilterRequest {
-                width,
-                height,
-                rgba_data: rgba_data.to_vec(),
-                response_tx: resp_tx,
-            };
-            if tx.blocking_send(req).is_ok()
-                && let Ok(result) = resp_rx.blocking_recv()
-            {
-                if result.len() == rgba_data.len() {
-                    rgba_data.copy_from_slice(&result);
-                } else {
+    let filters: Vec<(String, String, mpsc::Sender<CpuFilterRequest>)> = {
+        let state = state.read();
+        state
+            .filters
+            .iter()
+            .filter_map(|(filter_id, filter)| {
+                if !filter.enabled || !filter.supports_cpu {
+                    return None;
+                }
+                filter
+                    .cpu_request_tx
+                    .as_ref()
+                    .map(|tx| (filter_id.clone(), filter.name.clone(), tx.clone()))
+            })
+            .collect()
+    };
+
+    for (filter_id, filter_name, tx) in filters {
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+        let req = CpuFilterRequest {
+            width,
+            height,
+            rgba_data: rgba_data.to_vec(),
+            response_tx: resp_tx,
+        };
+        if tx.blocking_send(req).is_ok() {
+            match resp_rx.recv_timeout(std::time::Duration::from_millis(250)) {
+                Ok(result) => {
+                    if result.len() == rgba_data.len() {
+                        rgba_data.copy_from_slice(&result);
+                    } else {
+                        warn!(
+                            "Remote filter '{}' ({}) returned wrong buffer size",
+                            filter_name, filter_id
+                        );
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     warn!(
-                        "Remote filter '{}' ({}) returned wrong buffer size",
-                        filter.name, filter_id
+                        "Timed out waiting for remote filter '{}' ({}) response; skipping frame",
+                        filter_name, filter_id
+                    );
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    warn!(
+                        "Remote filter '{}' ({}) disconnected before responding",
+                        filter_name, filter_id
                     );
                 }
             }

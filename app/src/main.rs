@@ -433,7 +433,11 @@ fn setup_callbacks(
                     );
                 } else {
                     pm.spawned_python_plugins.insert(plugin_id.clone());
-                    crate::plugins::spawn_python_plugin(&script_path, &plugin_root);
+                    crate::plugins::spawn_python_plugin(
+                        &script_path,
+                        &plugin_root,
+                        Some(&action_id),
+                    );
                 }
             }
             Ok(plugins::ActionOutcome::Handled) => {

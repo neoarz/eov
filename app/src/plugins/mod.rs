@@ -119,7 +119,11 @@ fn open_plugin_window(req: &WindowOpenRequest, vtable: &PluginVTable) -> anyhow:
 ///
 /// The plugin is expected to have a `.venv/` directory inside its root
 /// with the slint package installed. The host uses the venv's python3.
-pub fn spawn_python_plugin(script_path: &Path, plugin_root: &Path) {
+pub fn spawn_python_plugin(
+    script_path: &Path,
+    plugin_root: &Path,
+    initial_action_id: Option<&str>,
+) {
     info!(
         "Spawning Python plugin: {} (cwd: {})",
         script_path.display(),
@@ -147,6 +151,9 @@ pub fn spawn_python_plugin(script_path: &Path, plugin_root: &Path) {
     // Pass the extension host address if available.
     if let Ok(host_addr) = std::env::var("EOV_EXTENSION_HOST") {
         cmd.env("EOV_EXTENSION_HOST", &host_addr);
+    }
+    if let Some(action_id) = initial_action_id {
+        cmd.env("EOV_INITIAL_PLUGIN_ACTION", action_id);
     }
 
     match cmd.spawn() {

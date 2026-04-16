@@ -196,6 +196,7 @@ export component HudToolbar inherits Rectangle {
             for btn[idx] in root.plugin-buttons: HudButton {
                 icon-source: btn.icon;
                 tooltip-text: btn.tooltip;
+                active: btn.active;
                 clicked => {
                     root.plugin-button-clicked(btn.plugin-id, btn.action-id);
                 }

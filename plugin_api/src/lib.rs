@@ -98,6 +98,8 @@ pub struct ToolbarButtonRegistration {
     pub icon: IconDescriptor,
     /// Opaque action identifier dispatched back to the plugin on click.
     pub action_id: String,
+    /// Whether the host should render this button in its active state.
+    pub active: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,11 +188,13 @@ mod tests {
                 data: "<svg/>".into(),
             },
             action_id: "do_thing".into(),
+            active: false,
         };
         assert_eq!(reg.plugin_id, "test");
         assert_eq!(reg.button_id, "btn1");
         assert_eq!(reg.tooltip, "Test Button");
         assert_eq!(reg.action_id, "do_thing");
+        assert!(!reg.active);
     }
 
     #[test]

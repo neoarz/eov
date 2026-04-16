@@ -13,6 +13,7 @@ from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 _PACKAGE = "eov.extension"
 _SERVICE = f"/{_PACKAGE}.ExtensionHost"
 _DESCRIPTOR_PATH = Path(__file__).with_name("eov_extension.desc")
+_MAX_GRPC_MESSAGE_LENGTH = 64 * 1024 * 1024
 
 
 def _load_pool() -> descriptor_pool.DescriptorPool:
@@ -146,6 +147,14 @@ class RemotePluginSession:
         )
         self._client.calls.register_toolbar_button(request)
 
+    def set_toolbar_button_active(self, button_id: str, active: bool) -> None:
+        request = self._client.messages.SetToolbarButtonActiveRequest(
+            plugin_handle=self.plugin_handle,
+            button_id=button_id,
+            active=active,
+        )
+        self._client.calls.set_toolbar_button_active(request)
+
     def register_hud_toolbar_button(
         self,
         button_id: str,
@@ -161,6 +170,14 @@ class RemotePluginSession:
             action_id=action_id,
         )
         self._client.calls.register_hud_toolbar_button(request)
+
+    def set_hud_toolbar_button_active(self, button_id: str, active: bool) -> None:
+        request = self._client.messages.SetHudToolbarButtonActiveRequest(
+            plugin_handle=self.plugin_handle,
+            button_id=button_id,
+            active=active,
+        )
+        self._client.calls.set_hud_toolbar_button_active(request)
 
     def toolbar_action_stream(self):
         request = self._client.messages.ToolbarActionStreamRequest(
@@ -320,8 +337,16 @@ class _CallNamespace:
         return self._unary_stream("ToolbarActionStream", "ToolbarActionStreamRequest", "ToolbarActionRequest")
 
     @property
+    def set_toolbar_button_active(self):
+        return self._unary_unary("SetToolbarButtonActive", "SetToolbarButtonActiveRequest", "HostCommandResponse")
+
+    @property
     def register_hud_toolbar_button(self):
         return self._unary_unary("RegisterHudToolbarButton", "RegisterHudToolbarButtonRequest", "HostCommandResponse")
+
+    @property
+    def set_hud_toolbar_button_active(self):
+        return self._unary_unary("SetHudToolbarButtonActive", "SetHudToolbarButtonActiveRequest", "HostCommandResponse")
 
     @property
     def hud_toolbar_action_stream(self):
@@ -342,7 +367,13 @@ class _CallNamespace:
 
 class ExtensionHostClient:
     def __init__(self, target: str):
-        self.channel = grpc.insecure_channel(target.replace("grpc://", ""))
+        self.channel = grpc.insecure_channel(
+            target.replace("grpc://", ""),
+            options=[
+                ("grpc.max_send_message_length", _MAX_GRPC_MESSAGE_LENGTH),
+                ("grpc.max_receive_message_length", _MAX_GRPC_MESSAGE_LENGTH),
+            ],
+        )
         self.messages = _MessageNamespace()
         self.calls = _CallNamespace(self.channel)
 

@@ -66,6 +66,7 @@ impl Plugin for ExamplePlugin {
                 data: SMILEY_SVG.into(),
             },
             action_id: ACTION_OPEN_PANEL.into(),
+            active: false,
         })?;
         self.event_log.lock().unwrap().record("plugin_activated");
         Ok(())

@@ -174,6 +174,7 @@ impl PluginManager {
                     data: btn.icon_svg.to_string(),
                 },
                 action_id: btn.action_id.to_string(),
+                active: false,
             };
             if let Err(e) = self.toolbar.register(registration) {
                 warn!(
@@ -193,6 +194,7 @@ impl PluginManager {
                     data: btn.icon_svg.to_string(),
                 },
                 action_id: btn.action_id.to_string(),
+                active: false,
             };
             if let Err(e) = self.hud_toolbar.register(registration) {
                 warn!(
@@ -321,6 +323,7 @@ impl PluginManager {
                 tooltip: btn.tooltip.clone(),
                 icon: IconDescriptor::Svg { data: svg },
                 action_id: btn.action_id.clone(),
+                active: false,
             };
             if let Err(e) = self.toolbar.register(registration) {
                 warn!(

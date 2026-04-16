@@ -6,6 +6,7 @@ processes CPU filter frames over the shared Python helper in plugin_api/python.
 """
 
 from pathlib import Path
+import os
 import sys
 import threading
 
@@ -68,14 +69,19 @@ def _apply_grayscale(rgba_bytes, width, height):
 
 def main():
     plugin_id = "grayscale_python"
-    button_id = "toggle_grayscale_hud"
-    action_id = "toggle_grayscale_hud"
+    main_button_id = "toggle_grayscale"
+    main_action_id = "toggle_grayscale"
+    hud_button_id = "toggle_grayscale_hud"
+    hud_action_id = "toggle_grayscale_hud"
     enabled = False
+    initial_action_id = os.environ.get("EOV_INITIAL_PLUGIN_ACTION", "")
 
     action_thread_running = False
     client = None
     filter_stream = None
     session = None
+    state_lock = threading.Lock()
+    cpu_stream_ready = threading.Event()
 
     try:
         client = ExtensionHostClient.from_env()
@@ -96,13 +102,22 @@ def main():
             f"Connected to {snapshot.app_name} {snapshot.app_version} (active file: {active_filename or 'none'})",
         )
 
+        session.register_toolbar_button(
+            button_id=main_button_id,
+            tooltip="Toggle Grayscale (Python)",
+            action_id=main_action_id,
+            icon_svg=HUD_ICON_SVG,
+        )
+        session.set_toolbar_button_active(main_button_id, False)
+
         session.register_hud_toolbar_button(
-            button_id=button_id,
+            button_id=hud_button_id,
             tooltip="Toggle Grayscale In This Viewport (Python)",
             icon_svg=HUD_ICON_SVG,
-            action_id=action_id,
+            action_id=hud_action_id,
         )
-        print("[grayscale_python] HUD toolbar button registered")
+        session.set_hud_toolbar_button_active(hud_button_id, False)
+        print("[grayscale_python] Toolbar buttons registered")
 
         filter_id = session.register_filter(
             name="Grayscale (Python)",
@@ -115,39 +130,78 @@ def main():
         print("[grayscale_python] Filter disabled by default")
 
         filter_stream = session.open_cpu_filter_stream(filter_id)
-        toolbar_actions = session.hud_toolbar_action_stream()
         action_thread_running = True
 
-        def action_loop():
-            nonlocal enabled, action_thread_running
+        def set_enabled(new_enabled, source):
+            nonlocal enabled
+            with state_lock:
+                if enabled == new_enabled:
+                    return
+                enabled = new_enabled
+                session.set_filter_enabled(filter_id, enabled)
+                session.set_toolbar_button_active(main_button_id, enabled)
+                session.set_hud_toolbar_button_active(hud_button_id, enabled)
+            state = "enabled" if enabled else "disabled"
+            print(f"[grayscale_python] {source} -> {state}")
+            session.log_message("info", f"Grayscale filter {state} ({source})")
+
+        def toggle_enabled(source):
+            with state_lock:
+                new_enabled = not enabled
+            set_enabled(new_enabled, source)
+
+        def cpu_filter_loop():
+            cpu_stream_ready.set()
             try:
-                for action in toolbar_actions:
-                    if action.plugin_id != plugin_id or action.action_id != action_id:
+                print("[grayscale_python] Stream connected, processing frames...")
+                for frame in filter_stream:
+                    if frame.width == 0 or frame.height == 0 or not frame.rgba_data:
                         continue
-                    enabled = not enabled
-                    session.set_filter_enabled(filter_id, enabled)
-                    state = "enabled" if enabled else "disabled"
+                    processed = _apply_grayscale(frame.rgba_data, frame.width, frame.height)
+                    filter_stream.send_processed_frame(frame.width, frame.height, processed)
+            except grpc.RpcError as err:
+                if action_thread_running:
+                    print(f"[grayscale_python] CPU filter stream error: {err}", file=sys.stderr)
+
+        def hud_action_loop():
+            nonlocal action_thread_running
+            try:
+                for action in session.hud_toolbar_action_stream():
+                    if action.plugin_id != plugin_id or action.action_id != hud_action_id:
+                        continue
                     pane = action.viewport.pane_index if action.viewport is not None else -1
-                    print(
-                        f"[grayscale_python] HUD action received: pane={pane} {action.button_id} -> {state}"
-                    )
-                    session.log_message(
-                        "info",
-                        f"Grayscale filter {state} from HUD pane {pane}",
-                    )
+                    toggle_enabled(f"HUD pane {pane} {action.button_id}")
             except grpc.RpcError as err:
                 if action_thread_running:
                     print(f"[grayscale_python] HUD toolbar stream error: {err}", file=sys.stderr)
 
-        action_thread = threading.Thread(target=action_loop, daemon=True)
-        action_thread.start()
+        def toolbar_action_loop():
+            nonlocal action_thread_running
+            try:
+                for action in session.toolbar_action_stream():
+                    if action.plugin_id != plugin_id or action.action_id != main_action_id:
+                        continue
+                    toggle_enabled(f"toolbar {action.button_id}")
+            except grpc.RpcError as err:
+                if action_thread_running:
+                    print(f"[grayscale_python] Toolbar stream error: {err}", file=sys.stderr)
 
-        print("[grayscale_python] Stream connected, processing frames...")
-        for frame in filter_stream:
-            if frame.width == 0 or frame.height == 0 or not frame.rgba_data:
-                continue
-            processed = _apply_grayscale(frame.rgba_data, frame.width, frame.height)
-            filter_stream.send_processed_frame(frame.width, frame.height, processed)
+        cpu_stream_thread = threading.Thread(target=cpu_filter_loop, daemon=True)
+        cpu_stream_thread.start()
+
+        if not cpu_stream_ready.wait(timeout=2.0):
+            print("[grayscale_python] CPU filter stream did not become ready in time", file=sys.stderr)
+
+        hud_action_thread = threading.Thread(target=hud_action_loop, daemon=True)
+        hud_action_thread.start()
+
+        toolbar_action_thread = threading.Thread(target=toolbar_action_loop, daemon=True)
+        toolbar_action_thread.start()
+
+        if initial_action_id == main_action_id:
+            set_enabled(True, f"initial action {initial_action_id}")
+
+        cpu_stream_thread.join()
     except grpc.RpcError as err:
         print(f"[grayscale_python] gRPC error: {err}", file=sys.stderr)
     except KeyboardInterrupt:
