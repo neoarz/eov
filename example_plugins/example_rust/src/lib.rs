@@ -105,7 +105,16 @@ impl Plugin for ExamplePlugin {
 // ---------------------------------------------------------------------------
 
 use abi_stable::std_types::{RString, RVec};
-use plugin_api::ffi::{ActionResponseFFI, PluginVTable, ToolbarButtonFFI, ViewportFilterFFI};
+use plugin_api::ffi::{
+    ActionResponseFFI, HostApiVTable, HostLogLevelFFI, HudToolbarButtonFFI, PluginVTable,
+    ToolbarButtonFFI, ViewportFilterFFI, ViewportSnapshotFFI,
+};
+
+static HOST_API: Mutex<Option<HostApiVTable>> = Mutex::new(None);
+
+extern "C" fn set_host_api_ffi(host_api: HostApiVTable) {
+    *HOST_API.lock().unwrap() = Some(host_api);
+}
 
 extern "C" fn get_toolbar_buttons_ffi() -> RVec<ToolbarButtonFFI> {
     RVec::from(vec![ToolbarButtonFFI {
@@ -116,7 +125,27 @@ extern "C" fn get_toolbar_buttons_ffi() -> RVec<ToolbarButtonFFI> {
     }])
 }
 
+extern "C" fn get_hud_toolbar_buttons_ffi() -> RVec<HudToolbarButtonFFI> {
+    RVec::new()
+}
+
 extern "C" fn on_action_ffi(action_id: RString) -> ActionResponseFFI {
+    if let Some(host_api) = *HOST_API.lock().unwrap() {
+        let snapshot = (host_api.get_snapshot)(host_api.context);
+        let message = match snapshot.active_file.into_option() {
+            Some(file) => format!(
+                "Example plugin opened from {} at {:.0}x{:.0}",
+                file.filename, file.width, file.height
+            ),
+            None => "Example plugin opened with no active file".to_string(),
+        };
+        (host_api.log_message)(
+            host_api.context,
+            HostLogLevelFFI::Info,
+            RString::from(message),
+        );
+    }
+
     println!(
         "[example_plugin] Button pressed! action_id=\"{}\"",
         action_id.as_str()
@@ -124,6 +153,13 @@ extern "C" fn on_action_ffi(action_id: RString) -> ActionResponseFFI {
     ActionResponseFFI {
         open_window: action_id.as_str() == ACTION_OPEN_PANEL,
     }
+}
+
+extern "C" fn on_hud_action_ffi(
+    _action_id: RString,
+    _viewport: ViewportSnapshotFFI,
+) -> ActionResponseFFI {
+    ActionResponseFFI { open_window: false }
 }
 
 extern "C" fn on_ui_callback_ffi(callback_name: RString) {
@@ -160,8 +196,11 @@ extern "C" fn set_filter_enabled_ffi(_filter_id: RString, _enabled: bool) {}
 #[unsafe(no_mangle)]
 pub extern "C" fn eov_get_plugin_vtable() -> PluginVTable {
     PluginVTable {
+        set_host_api: set_host_api_ffi,
         get_toolbar_buttons: get_toolbar_buttons_ffi,
+        get_hud_toolbar_buttons: get_hud_toolbar_buttons_ffi,
         on_action: on_action_ffi,
+        on_hud_action: on_hud_action_ffi,
         on_ui_callback: on_ui_callback_ffi,
         get_viewport_filters: get_viewport_filters_ffi,
         apply_filter_cpu: apply_filter_cpu_ffi,

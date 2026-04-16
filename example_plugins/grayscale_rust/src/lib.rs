@@ -12,7 +12,8 @@ use abi_stable::std_types::{RString, RVec};
 use ash::vk;
 use ash::vk::Handle;
 use plugin_api::ffi::{
-    ActionResponseFFI, GpuFilterContextFFI, PluginVTable, ToolbarButtonFFI, ViewportFilterFFI,
+    ActionResponseFFI, GpuFilterContextFFI, HostApiVTable, HostLogLevelFFI, HudToolbarButtonFFI,
+    PluginVTable, ToolbarButtonFFI, ViewportFilterFFI, ViewportSnapshotFFI,
 };
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +24,11 @@ const SMILEY_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 const FILTER_ID: &str = "grayscale";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+static HOST_API: Mutex<Option<HostApiVTable>> = Mutex::new(None);
+
+extern "C" fn set_host_api_ffi(host_api: HostApiVTable) {
+    *HOST_API.lock().unwrap() = Some(host_api);
+}
 
 // ---------------------------------------------------------------------------
 // FFI exports
@@ -37,14 +43,37 @@ extern "C" fn get_toolbar_buttons_ffi() -> RVec<ToolbarButtonFFI> {
     }])
 }
 
+extern "C" fn get_hud_toolbar_buttons_ffi() -> RVec<HudToolbarButtonFFI> {
+    RVec::new()
+}
+
 extern "C" fn on_action_ffi(action_id: RString) -> ActionResponseFFI {
     if action_id.as_str() == "toggle_grayscale" {
         let prev = ENABLED.fetch_xor(true, Ordering::Relaxed);
+        if let Some(host_api) = *HOST_API.lock().unwrap() {
+            let message = if !prev {
+                "Grayscale filter enabled"
+            } else {
+                "Grayscale filter disabled"
+            };
+            (host_api.log_message)(
+                host_api.context,
+                HostLogLevelFFI::Info,
+                RString::from(message),
+            );
+        }
         println!(
             "[grayscale_plugin] Grayscale toggled {}",
             if !prev { "ON" } else { "OFF" }
         );
     }
+    ActionResponseFFI { open_window: false }
+}
+
+extern "C" fn on_hud_action_ffi(
+    _action_id: RString,
+    _viewport: ViewportSnapshotFFI,
+) -> ActionResponseFFI {
     ActionResponseFFI { open_window: false }
 }
 
@@ -366,8 +395,11 @@ extern "C" fn set_filter_enabled_ffi(_filter_id: RString, enabled: bool) {
 #[unsafe(no_mangle)]
 pub extern "C" fn eov_get_plugin_vtable() -> PluginVTable {
     PluginVTable {
+        set_host_api: set_host_api_ffi,
         get_toolbar_buttons: get_toolbar_buttons_ffi,
+        get_hud_toolbar_buttons: get_hud_toolbar_buttons_ffi,
         on_action: on_action_ffi,
+        on_hud_action: on_hud_action_ffi,
         on_ui_callback: on_ui_callback_ffi,
         get_viewport_filters: get_viewport_filters_ffi,
         apply_filter_cpu: apply_filter_cpu_ffi,

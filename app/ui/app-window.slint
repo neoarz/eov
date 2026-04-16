@@ -8,6 +8,7 @@ import {
     ExportPreviewInfo,
     ExportSettings,
     FilteringMode,
+    HudToolbarButtonData,
     MeasurementLine,
     MeasurementUnit,
     MetadataItem,
@@ -140,6 +141,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show-minimap: true;
     in-out property <bool> show-metadata: false;
     in-out property <[PluginButtonData]> plugin-buttons: [];
+    in-out property <[HudToolbarButtonData]> plugin-hud-buttons: [];
 
     callback open-file-requested();
     callback new-tab-requested(int);
@@ -174,6 +176,7 @@ export component AppWindow inherits Window {
     callback render-backend-selected(RenderMode);
     callback filtering-mode-selected(FilteringMode);
     callback plugin-button-clicked(/* plugin-id */ string, /* action-id */ string);
+    callback hud-plugin-button-clicked(int, /* plugin-id */ string, /* action-id */ string);
     callback move-tab-to-pane(int, int, int);
     callback split-tab-by-drop(int, int);
     callback reorder-tab(int, int, int);
@@ -329,6 +332,7 @@ export component AppWindow inherits Window {
                 split-enabled: root.split-enabled;
                 focused-pane: root.focused-pane;
                 current-tool: root.current-tool;
+                plugin-hud-buttons: root.plugin-hud-buttons;
                 debug-mode: root.debug-mode;
                 fps: root.fps;
                 recent-files: root.recent-files;
@@ -605,6 +609,9 @@ export component AppWindow inherits Window {
                 }
                 hud-deconv-e-view-toggled(pane) => {
                     root.hud-deconv-e-view-toggled(pane);
+                }
+                hud-plugin-button-clicked(pane, plugin-id, action-id) => {
+                    root.hud-plugin-button-clicked(pane, plugin-id, action-id);
                 }
             }
 

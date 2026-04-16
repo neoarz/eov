@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import {
+    HudToolbarButtonData,
     MeasurementUnit,
     PaneViewData,
     RecentFileData,
@@ -19,6 +20,7 @@ component PaneView inherits Rectangle {
     in property <ToolType> current-tool: ToolType.navigate;
     in property <bool> debug-mode: false;
     in property <float> fps: 0;
+    in property <[HudToolbarButtonData]> plugin-hud-buttons: [];
     in property <int> focused-pane: 0;
     in property <int> dragging-tab-id: -1;
     in property <int> drag-source-pane: -1;
@@ -72,6 +74,7 @@ component PaneView inherits Rectangle {
     callback hud-deconv-e-visibility-toggled(int);
     callback hud-deconv-h-view-toggled(int);
     callback hud-deconv-e-view-toggled(int);
+    callback hud-plugin-button-clicked(int, string, string);
 
     border-width: 0px;
     border-color: transparent;
@@ -146,6 +149,7 @@ component PaneView inherits Rectangle {
                 fps: root.fps;
                 zoom-slider-position: root.pane-data.zoom-slider-position;
                 hud: root.pane-data.hud;
+                plugin-hud-buttons: root.plugin-hud-buttons;
 
                 pan(dx, dy) => {
                     root.pane-focused(root.pane-data.id);
@@ -270,6 +274,10 @@ component PaneView inherits Rectangle {
                     root.pane-focused(root.pane-data.id);
                     root.hud-deconv-e-view-toggled(root.pane-data.id);
                 }
+                hud-plugin-button-clicked(plugin-id, action-id) => {
+                    root.pane-focused(root.pane-data.id);
+                    root.hud-plugin-button-clicked(root.pane-data.id, plugin-id, action-id);
+                }
             }
         }
     }
@@ -389,6 +397,7 @@ export component SplitPaneContainer inherits Rectangle {
     in property <int> os-file-hover-pane: -1;
     in property <int> os-file-hover-side: -1;
     in property <ToolType> current-tool: ToolType.navigate;
+    in property <[HudToolbarButtonData]> plugin-hud-buttons: [];
     property <length> pane-gap: 6px;
     property <int> pane-count: max(1, panes.length);
     property <length> pane-width: (self.width - max(0px, (pane-count - 1) * pane-gap)) / pane-count;
@@ -447,6 +456,7 @@ export component SplitPaneContainer inherits Rectangle {
     callback hud-deconv-e-visibility-toggled(int);
     callback hud-deconv-h-view-toggled(int);
     callback hud-deconv-e-view-toggled(int);
+    callback hud-plugin-button-clicked(int, string, string);
 
     background: Theme.background;
 
@@ -462,6 +472,7 @@ export component SplitPaneContainer inherits Rectangle {
             show-minimap: root.show-minimap;
             show-metadata: root.show-metadata;
             current-tool: root.current-tool;
+            plugin-hud-buttons: root.plugin-hud-buttons;
             debug-mode: root.debug-mode;
             fps: root.fps;
             focused-pane: root.focused-pane;
@@ -602,6 +613,9 @@ export component SplitPaneContainer inherits Rectangle {
             }
             hud-deconv-e-view-toggled(pane-id) => {
                 root.hud-deconv-e-view-toggled(pane-id);
+            }
+            hud-plugin-button-clicked(pane-id, plugin-id, action-id) => {
+                root.hud-plugin-button-clicked(pane-id, plugin-id, action-id);
             }
         }
     }

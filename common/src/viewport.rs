@@ -555,6 +555,18 @@ impl ViewportState {
         self.navigation_target_center = self.viewport.center;
     }
 
+    /// Immediately set the viewport center and zoom, cancelling any active animation.
+    pub fn set_center_zoom(&mut self, center_x: f64, center_y: f64, zoom: f64) {
+        self.stop();
+        self.viewport.center = DVec2::new(center_x, center_y);
+        self.viewport.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        self.viewport.fit_to_view();
+        self.viewport.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        self.viewport.center = DVec2::new(center_x, center_y);
+        self.viewport.clamp_position();
+        self.target_zoom = self.viewport.zoom;
+    }
+
     /// Zoom at screen position with smooth exponential chase.
     /// Ideal for scroll wheel input — each tick compounds onto the target
     /// while the viewport smoothly converges via exponential smoothing.

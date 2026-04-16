@@ -27,9 +27,11 @@
 //! ```
 
 pub mod ffi;
+pub mod host;
 pub mod manifest;
 pub mod viewport_filter;
 
+pub use host::{HostLogLevel, HostSnapshot, OpenFileInfo, ViewportSnapshot};
 pub use manifest::PluginManifest;
 pub use manifest::{ManifestToolbarButton, PluginLanguage};
 pub use viewport_filter::ViewportFilter;

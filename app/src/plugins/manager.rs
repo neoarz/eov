@@ -42,6 +42,7 @@ pub enum ActionOutcome {
 pub struct PluginManager {
     pub registry: PluginRegistry,
     pub toolbar: ToolbarManager,
+    pub hud_toolbar: ToolbarManager,
     /// Descriptors for all successfully discovered plugins on disk.
     pub descriptors: Vec<PluginDescriptor>,
     /// Plugin root directory.
@@ -59,6 +60,7 @@ impl PluginManager {
         Self {
             registry: PluginRegistry::new(),
             toolbar: ToolbarManager::new(),
+            hud_toolbar: ToolbarManager::new(),
             descriptors: Vec::new(),
             plugin_dir,
             loaded_vtables: HashMap::new(),
@@ -181,6 +183,25 @@ impl PluginManager {
             }
         }
 
+        let hud_buttons = (vtable.get_hud_toolbar_buttons)();
+        for btn in hud_buttons.iter() {
+            let registration = ToolbarButtonRegistration {
+                plugin_id: plugin_id.to_string(),
+                button_id: btn.button_id.to_string(),
+                tooltip: btn.tooltip.to_string(),
+                icon: IconDescriptor::Svg {
+                    data: btn.icon_svg.to_string(),
+                },
+                action_id: btn.action_id.to_string(),
+            };
+            if let Err(e) = self.hud_toolbar.register(registration) {
+                warn!(
+                    "Failed to register HUD toolbar button from '{}': {e}",
+                    plugin_id
+                );
+            }
+        }
+
         self.loaded_vtables.insert(plugin_id.to_string(), vtable);
         Ok(())
     }
@@ -236,6 +257,38 @@ impl PluginManager {
         let mut ctx = AppHostContext::new(&mut self.toolbar);
         plugin.on_action(action_id, &mut ctx, &plugin_root)?;
         Ok(ActionOutcome::Handled)
+    }
+
+    /// Handle a viewport-scoped HUD toolbar action.
+    pub fn handle_hud_action(
+        &mut self,
+        plugin_id: &str,
+        action_id: &str,
+        viewport: &plugin_api::ViewportSnapshot,
+    ) -> PluginResult<ActionOutcome> {
+        if let Some(vtable) = self.loaded_vtables.get(plugin_id) {
+            let vt = *vtable;
+            let viewport = plugin_api::ffi::ViewportSnapshotFFI {
+                pane_index: viewport.pane_index,
+                center_x: viewport.center_x,
+                center_y: viewport.center_y,
+                zoom: viewport.zoom,
+                width: viewport.width,
+                height: viewport.height,
+                image_width: viewport.image_width,
+                image_height: viewport.image_height,
+                bounds_left: viewport.bounds_left,
+                bounds_top: viewport.bounds_top,
+                bounds_right: viewport.bounds_right,
+                bounds_bottom: viewport.bounds_bottom,
+            };
+            let _ = (vt.on_hud_action)(RString::from(action_id), viewport);
+            return Ok(ActionOutcome::Handled);
+        }
+
+        Err(plugin_api::PluginError::Other(format!(
+            "unknown HUD plugin '{plugin_id}'"
+        )))
     }
 
     /// Activate a Python plugin: register its manifest-declared toolbar buttons

@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import {
+    HudToolbarButtonData,
     HudSettings,
     MeasurementLine,
     MeasurementUnit,
@@ -36,6 +37,7 @@ export component Viewport inherits Rectangle {
     in property <[MeasurementLine]> measurements: [];
     in property <MeasurementLine> candidate-measurement: { x1: 0, y1: 0, x2: 0, y2: 0, distance-um: 0, visible: false };
     in property <HudSettings> hud;
+    in property <[HudToolbarButtonData]> plugin-hud-buttons: [];
 
     callback pan(float, float);
     callback zoom(float, float, float);
@@ -69,6 +71,7 @@ export component Viewport inherits Rectangle {
     callback hud-deconv-e-visibility-toggled();
     callback hud-deconv-h-view-toggled();
     callback hud-deconv-e-view-toggled();
+    callback hud-plugin-button-clicked(string, string);
 
     out property <length> viewport-width: self.width;
     out property <length> viewport-height: self.height;
@@ -466,6 +469,7 @@ export component Viewport inherits Rectangle {
         show-scale-bar: root.hud.show-scale-bar;
         dropdown-open: root.hud.hud-dropdown-open;
         has-adjustments: root.hud.sharpness > 0.01 || (root.hud.gamma - 1.0) > 0.01 || (1.0 - root.hud.gamma) > 0.01 || root.hud.brightness > 0.01 || root.hud.brightness < -0.01 || (root.hud.contrast - 1.0) > 0.01 || (1.0 - root.hud.contrast) > 0.01;
+        plugin-buttons: root.plugin-hud-buttons;
         fit-to-view => {
             root.fit-to-view();
         }
@@ -483,6 +487,9 @@ export component Viewport inherits Rectangle {
         }
         zoom-out => {
             root.hud-zoom-out();
+        }
+        plugin-button-clicked(plugin-id, action-id) => {
+            root.hud-plugin-button-clicked(plugin-id, action-id);
         }
     }
 

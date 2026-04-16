@@ -7,6 +7,7 @@ use common::{
     FilteringMode, MeasurementUnit, RenderBackend, StainNormalization, TileManager, ViewportState,
     WsiFile,
 };
+use plugin_api::ToolbarButtonRegistration;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
@@ -477,6 +478,10 @@ pub struct AppState {
     pub needs_render: bool,
     /// Whether the render loop timer is currently running
     pub render_loop_running: bool,
+    /// Static/local plugin toolbar buttons contributed by in-process plugins.
+    pub local_plugin_buttons: Vec<ToolbarButtonRegistration>,
+    /// Static/local viewport HUD toolbar buttons contributed by in-process plugins.
+    pub local_hud_plugin_buttons: Vec<ToolbarButtonRegistration>,
     /// In-process viewport filter chain (FFI plugins).
     pub filter_chain: SharedFilterChain,
     /// Shared extension host state (remote gRPC filters).
@@ -517,6 +522,8 @@ impl AppState {
             show_metadata: false,
             needs_render: true,
             render_loop_running: false,
+            local_plugin_buttons: Vec::new(),
+            local_hud_plugin_buttons: Vec::new(),
             filter_chain: crate::viewport_filter::new_shared_filter_chain(),
             extension_host_state: crate::extension_host::new_shared_state(),
             tokio_handle: None,

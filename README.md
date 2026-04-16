@@ -269,6 +269,10 @@ Plugins can be written in any language and need not use Slint for their GUIs. Ex
 
 Rust plugins can interact directly with the host application via FFI. The gRPC API surface is available when using other languages.
 
+Both transports now expose the same host-facing capability set as closely as possible. Plugins can query a host snapshot containing app/session state, open-file metadata, and the active viewport; read slide regions by file id; open a file in the viewer; move or fit the active viewport; frame an image-space rectangle; and send plugin-scoped log messages back to the host.
+
+For Rust plugins this surface is provided as a host API vtable over `abi_stable`. For out-of-process plugins it is available from the `ExtensionHost` gRPC service in `proto/eov_extension.proto`.
+
 ### Plugin Directory
 
 By default, eov looks for plugins in `~/.eov/plugins/`. Override this with the `--plugin-dir` flag:

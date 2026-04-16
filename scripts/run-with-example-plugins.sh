@@ -38,6 +38,15 @@ for plugin_src in "$PLUGINS_DIR"/*/; do
         # Copy Python script(s)
         cp "$plugin_src"/*.py "$plugin_dest/"
 
+        # Copy the shared Python host helper and current protobuf descriptor.
+        helper_src_dir="$REPO_ROOT/plugin_api/python"
+        if [ -f "$helper_src_dir/eov_plugin_host.py" ] && [ -f "$helper_src_dir/eov_extension.desc" ]; then
+            cp "$helper_src_dir/eov_plugin_host.py" "$plugin_dest/"
+            cp "$helper_src_dir/eov_extension.desc" "$plugin_dest/"
+        else
+            echo "  WARNING: Python host helper files missing in $helper_src_dir"
+        fi
+
         # Create a venv inside the plugin directory and install deps.
         if [ ! -d "$plugin_dest/.venv" ]; then
             echo "  Creating Python venv for $plugin_id..."

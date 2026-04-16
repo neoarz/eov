@@ -6,12 +6,22 @@
 //! [`abi_stable::library::RawLibrary`].
 
 use abi_stable::StableAbi;
-use abi_stable::std_types::{RString, RVec};
+use abi_stable::std_types::{ROption, RResult, RString, RVec};
 
 /// FFI-safe toolbar button registration data.
 #[repr(C)]
 #[derive(StableAbi, Clone, Debug)]
 pub struct ToolbarButtonFFI {
+    pub button_id: RString,
+    pub tooltip: RString,
+    pub icon_svg: RString,
+    pub action_id: RString,
+}
+
+/// FFI-safe HUD toolbar button registration data.
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct HudToolbarButtonFFI {
     pub button_id: RString,
     pub tooltip: RString,
     pub icon_svg: RString,
@@ -26,6 +36,96 @@ pub struct ActionResponseFFI {
     pub open_window: bool,
 }
 
+#[repr(u32)]
+#[derive(StableAbi, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostLogLevelFFI {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct OpenFileInfoFFI {
+    pub file_id: i32,
+    pub path: RString,
+    pub filename: RString,
+    pub width: u64,
+    pub height: u64,
+    pub level_count: u32,
+    pub vendor: ROption<RString>,
+    pub mpp_x: ROption<f64>,
+    pub mpp_y: ROption<f64>,
+    pub objective_power: ROption<f64>,
+    pub scan_date: ROption<RString>,
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct ViewportSnapshotFFI {
+    pub pane_index: u32,
+    pub center_x: f64,
+    pub center_y: f64,
+    pub zoom: f64,
+    pub width: f64,
+    pub height: f64,
+    pub image_width: f64,
+    pub image_height: f64,
+    pub bounds_left: f64,
+    pub bounds_top: f64,
+    pub bounds_right: f64,
+    pub bounds_bottom: f64,
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub struct HostSnapshotFFI {
+    pub app_name: RString,
+    pub app_version: RString,
+    pub render_backend: RString,
+    pub filtering_mode: RString,
+    pub split_enabled: bool,
+    pub focused_pane: u32,
+    pub open_files: RVec<OpenFileInfoFFI>,
+    pub active_file: ROption<OpenFileInfoFFI>,
+    pub active_viewport: ROption<ViewportSnapshotFFI>,
+    pub recent_files: RVec<RString>,
+}
+
+#[repr(C)]
+#[derive(StableAbi, Copy, Clone)]
+pub struct HostApiVTable {
+    pub context: u64,
+    pub get_snapshot: extern "C" fn(context: u64) -> HostSnapshotFFI,
+    pub read_region: extern "C" fn(
+        context: u64,
+        file_id: i32,
+        level: u32,
+        x: i64,
+        y: i64,
+        width: u32,
+        height: u32,
+    ) -> RResult<RVec<u8>, RString>,
+    pub open_file: extern "C" fn(context: u64, path: RString) -> RResult<(), RString>,
+    pub set_active_viewport: extern "C" fn(
+        context: u64,
+        center_x: f64,
+        center_y: f64,
+        zoom: f64,
+    ) -> RResult<(), RString>,
+    pub fit_active_viewport: extern "C" fn(context: u64) -> RResult<(), RString>,
+    pub frame_active_rect: extern "C" fn(
+        context: u64,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) -> RResult<(), RString>,
+    pub log_message: extern "C" fn(context: u64, level: HostLogLevelFFI, message: RString),
+}
+
 /// VTable of function pointers exported by each plugin shared library.
 ///
 /// Each plugin crate exports:
@@ -36,11 +136,22 @@ pub struct ActionResponseFFI {
 #[repr(C)]
 #[derive(StableAbi, Copy, Clone)]
 pub struct PluginVTable {
+    /// Supplies the plugin with a host API vtable so it can query the app and
+    /// issue host commands later during callbacks.
+    pub set_host_api: extern "C" fn(host_api: HostApiVTable),
+
     /// Returns the toolbar buttons this plugin wants to register.
     pub get_toolbar_buttons: extern "C" fn() -> RVec<ToolbarButtonFFI>,
 
+    /// Returns HUD toolbar buttons shown inside each viewport.
+    pub get_hud_toolbar_buttons: extern "C" fn() -> RVec<HudToolbarButtonFFI>,
+
     /// Called when a toolbar button registered by this plugin is clicked.
     pub on_action: extern "C" fn(action_id: RString) -> ActionResponseFFI,
+
+    /// Called when a HUD toolbar button is clicked in a specific viewport.
+    pub on_hud_action:
+        extern "C" fn(action_id: RString, viewport: ViewportSnapshotFFI) -> ActionResponseFFI,
 
     /// Called when a callback defined in the plugin's `.slint` UI is invoked.
     /// `callback_name` is the kebab-case name of the callback as declared in

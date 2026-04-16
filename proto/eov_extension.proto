@@ -10,6 +10,22 @@ package eov.extension;
 // ---------------------------------------------------------------------------
 
 service ExtensionHost {
+  rpc RegisterPlugin(RegisterPluginRequest) returns (RegisterPluginResponse);
+  rpc UnregisterPlugin(UnregisterPluginRequest) returns (HostCommandResponse);
+  rpc GetHostSnapshot(Empty) returns (HostSnapshot);
+  rpc ReadRegion(ReadRegionRequest) returns (ReadRegionResponse);
+  rpc OpenFile(OpenFileRequest) returns (HostCommandResponse);
+  rpc SetActiveViewport(SetActiveViewportRequest) returns (HostCommandResponse);
+  rpc FitActiveViewport(Empty) returns (HostCommandResponse);
+  rpc FrameActiveRect(FrameActiveRectRequest) returns (HostCommandResponse);
+  rpc LogMessage(LogMessageRequest) returns (HostCommandResponse);
+  rpc RegisterToolbarButton(RegisterToolbarButtonRequest) returns (HostCommandResponse);
+  rpc UnregisterToolbarButton(UnregisterToolbarButtonRequest) returns (HostCommandResponse);
+  rpc ToolbarActionStream(ToolbarActionStreamRequest) returns (stream ToolbarActionRequest);
+  rpc RegisterHudToolbarButton(RegisterHudToolbarButtonRequest) returns (HostCommandResponse);
+  rpc UnregisterHudToolbarButton(UnregisterHudToolbarButtonRequest) returns (HostCommandResponse);
+  rpc HudToolbarActionStream(HudToolbarActionStreamRequest) returns (stream HudToolbarActionRequest);
+
   // Register a viewport filter. Returns a unique filter id.
   rpc RegisterFilter(RegisterFilterRequest) returns (RegisterFilterResponse);
 
@@ -38,15 +54,182 @@ service ExtensionHost {
 // Messages
 // ---------------------------------------------------------------------------
 
+message Empty {}
+
+message RegisterPluginRequest {
+  string plugin_id = 1;
+  string display_name = 2;
+  string version = 3;
+  string language = 4;
+}
+
+message RegisterPluginResponse {
+  string plugin_handle = 1;
+  string plugin_id = 2;
+  HostSnapshot host_snapshot = 3;
+}
+
+message UnregisterPluginRequest {
+  string plugin_handle = 1;
+}
+
+message HostSnapshot {
+  string app_name = 1;
+  string app_version = 2;
+  string render_backend = 3;
+  string filtering_mode = 4;
+  bool split_enabled = 5;
+  uint32 focused_pane = 6;
+  repeated OpenFileInfo open_files = 7;
+  OpenFileInfo active_file = 8;
+  ViewportSnapshot active_viewport = 9;
+  repeated string recent_files = 10;
+  bool has_active_file = 11;
+  bool has_active_viewport = 12;
+}
+
+message OpenFileInfo {
+  int32 file_id = 1;
+  string path = 2;
+  string filename = 3;
+  uint64 width = 4;
+  uint64 height = 5;
+  uint32 level_count = 6;
+  string vendor = 7;
+  double mpp_x = 8;
+  double mpp_y = 9;
+  double objective_power = 10;
+  string scan_date = 11;
+  bool has_vendor = 12;
+  bool has_mpp_x = 13;
+  bool has_mpp_y = 14;
+  bool has_objective_power = 15;
+  bool has_scan_date = 16;
+}
+
+message ViewportSnapshot {
+  uint32 pane_index = 1;
+  double center_x = 2;
+  double center_y = 3;
+  double zoom = 4;
+  double width = 5;
+  double height = 6;
+  double image_width = 7;
+  double image_height = 8;
+  double bounds_left = 9;
+  double bounds_top = 10;
+  double bounds_right = 11;
+  double bounds_bottom = 12;
+}
+
+message ReadRegionRequest {
+  int32 file_id = 1;
+  uint32 level = 2;
+  sint64 x = 3;
+  sint64 y = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+}
+
+message ReadRegionResponse {
+  bytes rgba_data = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+}
+
+message OpenFileRequest {
+  string path = 1;
+}
+
+message SetActiveViewportRequest {
+  double center_x = 1;
+  double center_y = 2;
+  double zoom = 3;
+}
+
+message FrameActiveRectRequest {
+  double x = 1;
+  double y = 2;
+  double width = 3;
+  double height = 4;
+}
+
+enum LogLevel {
+  LOG_LEVEL_TRACE = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+}
+
+message LogMessageRequest {
+  string plugin_handle = 1;
+  LogLevel level = 2;
+  string message = 3;
+}
+
+message HostCommandResponse {}
+
+message RegisterToolbarButtonRequest {
+  string plugin_handle = 1;
+  string button_id = 2;
+  string tooltip = 3;
+  string action_id = 4;
+  string icon_svg = 5;
+}
+
+message UnregisterToolbarButtonRequest {
+  string plugin_handle = 1;
+  string button_id = 2;
+}
+
+message ToolbarActionStreamRequest {
+  string plugin_handle = 1;
+}
+
+message ToolbarActionRequest {
+  string plugin_handle = 1;
+  string plugin_id = 2;
+  string button_id = 3;
+  string action_id = 4;
+}
+
+message RegisterHudToolbarButtonRequest {
+  string plugin_handle = 1;
+  string button_id = 2;
+  string tooltip = 3;
+  string icon_svg = 4;
+  string action_id = 5;
+}
+
+message UnregisterHudToolbarButtonRequest {
+  string plugin_handle = 1;
+  string button_id = 2;
+}
+
+message HudToolbarActionStreamRequest {
+  string plugin_handle = 1;
+}
+
+message HudToolbarActionRequest {
+  string plugin_handle = 1;
+  string plugin_id = 2;
+  string button_id = 3;
+  string action_id = 4;
+  ViewportSnapshot viewport = 5;
+}
+
 message RegisterFilterRequest {
+  string plugin_handle = 1;
+
   // Human-readable name shown in the UI.
-  string name = 1;
+  string name = 2;
 
   // Whether this filter supports CPU pixel processing.
-  bool supports_cpu = 2;
+  bool supports_cpu = 3;
 
   // Whether this filter supports GPU processing (future: DMA-BUF).
-  bool supports_gpu = 3;
+  bool supports_gpu = 4;
 }
 
 message RegisterFilterResponse {
@@ -61,14 +244,16 @@ message RegisterFilterResponse {
 }
 
 message UnregisterFilterRequest {
-  string filter_id = 1;
+  string plugin_handle = 1;
+  string filter_id = 2;
 }
 
 message UnregisterFilterResponse {}
 
 message SetFilterEnabledRequest {
-  string filter_id = 1;
-  bool enabled = 2;
+  string plugin_handle = 1;
+  string filter_id = 2;
+  bool enabled = 3;
 }
 
 message SetFilterEnabledResponse {}

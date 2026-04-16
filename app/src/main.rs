@@ -12,6 +12,7 @@ mod file_ops;
 mod gpu;
 mod gpu_interop;
 mod pane_ui;
+mod plugin_host;
 mod plugins;
 mod render;
 mod render_pool;
@@ -199,8 +200,9 @@ fn main() -> Result<()> {
 
     if let Some(port) = extension_host_port {
         let ext_state = Arc::clone(&extension_host_state);
+        let app_state = Arc::clone(&state);
         tokio_handle.spawn(async move {
-            if let Err(e) = extension_host::start_extension_host(port, ext_state).await {
+            if let Err(e) = extension_host::start_extension_host(port, ext_state, app_state).await {
                 tracing::error!("Extension host server failed: {e}");
             }
         });
@@ -241,10 +243,14 @@ fn main() -> Result<()> {
         }
 
         info!(
-            "Plugin system ready: {} toolbar button(s) from {} plugin(s)",
+            "Plugin system ready: {} toolbar button(s), {} HUD toolbar button(s) from {} plugin(s)",
             pm.toolbar.len(),
+            pm.hud_toolbar.len(),
             pm.descriptors.len()
         );
+
+        state.write().local_plugin_buttons = pm.toolbar.buttons().to_vec();
+        state.write().local_hud_plugin_buttons = pm.hud_toolbar.buttons().to_vec();
     }
 
     let ui = AppWindow::new()?;
@@ -271,6 +277,15 @@ fn main() -> Result<()> {
     set_gpu_renderer_handle(Rc::clone(&gpu_renderer));
 
     let render_timer = Rc::new(Timer::default());
+    plugin_host::init_ui_runtime(&ui, &state, &tile_cache, &render_timer);
+    plugin_host::refresh_plugin_buttons().map_err(anyhow::Error::msg)?;
+
+    {
+        let pm = plugin_manager.borrow();
+        for (plugin_id, vtable) in pm.loaded_vtables() {
+            (vtable.set_host_api)(plugin_host::build_host_api(plugin_id, &state));
+        }
+    }
 
     setup_callbacks(
         &ui,
@@ -279,24 +294,6 @@ fn main() -> Result<()> {
         Rc::clone(&render_timer),
         Rc::clone(&plugin_manager),
     );
-
-    // Set plugin toolbar buttons on the UI
-    {
-        let pm = plugin_manager.borrow();
-        let buttons: Vec<crate::PluginButtonData> = pm
-            .toolbar
-            .buttons()
-            .iter()
-            .map(|b| crate::PluginButtonData {
-                plugin_id: SharedString::from(&b.plugin_id),
-                button_id: SharedString::from(&b.button_id),
-                tooltip: SharedString::from(&b.tooltip),
-                action_id: SharedString::from(&b.action_id),
-            })
-            .collect();
-        let model = std::rc::Rc::new(slint::VecModel::from(buttons));
-        ui.set_plugin_buttons(slint::ModelRc::from(model));
-    }
 
     ui.set_debug_mode(launch_options.debug_mode);
     {
@@ -386,6 +383,29 @@ fn setup_callbacks(
         let action_id = action_id.to_string();
         info!("Plugin button clicked: {plugin_id}:{action_id}");
 
+        let extension_host_state = {
+            let state = filter_state.read();
+            Arc::clone(&state.extension_host_state)
+        };
+        if crate::extension_host::has_remote_toolbar_action(
+            &extension_host_state,
+            &plugin_id,
+            &action_id,
+        ) {
+            match crate::extension_host::dispatch_remote_toolbar_action(
+                &extension_host_state,
+                &plugin_id,
+                &action_id,
+            ) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::error!("Remote plugin action error: {err}");
+                    return;
+                }
+            }
+        }
+
         let mut pm = pm.borrow_mut();
         match pm.handle_action(&plugin_id, &action_id) {
             Ok(plugins::ActionOutcome::RustPluginWindow { plugin_root }) => {
@@ -434,6 +454,58 @@ fn setup_callbacks(
             Err(e) => {
                 tracing::error!("Plugin action error: {e}");
             }
+        }
+    });
+
+    let pm = Rc::clone(&plugin_manager);
+    let filter_state = Arc::clone(&state);
+    ui.on_hud_plugin_button_clicked(move |pane, plugin_id, action_id| {
+        let pane = PaneId(pane.max(0) as usize);
+        let plugin_id = plugin_id.to_string();
+        let action_id = action_id.to_string();
+        info!(
+            "HUD plugin button clicked: pane={} {plugin_id}:{action_id}",
+            pane.0
+        );
+
+        let viewport = match crate::plugin_host::viewport_snapshot_for_pane(&filter_state, pane) {
+            Some(viewport) => viewport,
+            None => {
+                tracing::warn!(
+                    "HUD plugin button click ignored without viewport: pane={}",
+                    pane.0
+                );
+                return;
+            }
+        };
+
+        let extension_host_state = {
+            let state = filter_state.read();
+            Arc::clone(&state.extension_host_state)
+        };
+        if crate::extension_host::has_remote_hud_toolbar_action(
+            &extension_host_state,
+            &plugin_id,
+            &action_id,
+        ) {
+            match crate::extension_host::dispatch_remote_hud_toolbar_action(
+                &extension_host_state,
+                &plugin_id,
+                &action_id,
+                viewport.clone(),
+            ) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::error!("Remote HUD plugin action error: {err}");
+                    return;
+                }
+            }
+        }
+
+        let mut pm = pm.borrow_mut();
+        if let Err(err) = pm.handle_hud_action(&plugin_id, &action_id, &viewport) {
+            tracing::error!("Local HUD plugin action error: {err}");
         }
     });
 }

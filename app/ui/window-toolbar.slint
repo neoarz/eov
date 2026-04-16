@@ -231,9 +231,9 @@ export component WindowToolbar inherits Rectangle {
             }
 
             // Plugin-contributed toolbar buttons
-            for btn[idx] in root.plugin-buttons: ToolButton {
+            for btn[idx] in root.plugin-buttons: SvgToolButton {
                 width: 32px;
-                icon: "☺";
+                icon-source: btn.icon;
                 tooltip-text: btn.tooltip;
                 clicked => {
                     root.plugin-button-clicked(btn.plugin-id, btn.action-id);

@@ -1731,7 +1731,15 @@ fn render_pane_to_image(
         };
     }
 
-    if render_backend == RenderBackend::Gpu {
+    let effective_render_backend = if render_backend == RenderBackend::Gpu
+        && crate::extension_host::has_enabled_remote_cpu_only_filters(extension_host_state)
+    {
+        RenderBackend::Cpu
+    } else {
+        render_backend
+    };
+
+    if effective_render_backend == RenderBackend::Gpu {
         // Adaptive Lanczos: at low zoom, switch to trilinear on GPU
         let gpu_filtering = if filtering_mode == FilteringMode::Lanczos3 && lanczos_weight < 1.0 {
             FilteringMode::Trilinear
